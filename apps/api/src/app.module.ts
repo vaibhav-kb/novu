@@ -1,22 +1,27 @@
-/* eslint-disable global-require */
 import { DynamicModule, Module, Provider } from '@nestjs/common';
-import { APP_INTERCEPTOR } from '@nestjs/core';
-import { cacheService, TracingModule } from '@novu/application-generic';
-import { Client, NovuModule } from '@novu/framework/nest';
-
 import { ForwardReference } from '@nestjs/common/interfaces/modules/forward-reference.interface';
 import { Type } from '@nestjs/common/interfaces/type.interface';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ApiExcludeController } from '@nestjs/swagger';
-import { usageLimitsWorkflow } from '@novu/notifications';
+import { cacheService, TracingModule } from '@novu/application-generic';
+import { Client, NovuModule } from '@novu/framework/nest';
+import { usageLimitsWorkflow, usageReportWorkflow } from '@novu/notifications';
 import { isClerkEnabled } from '@novu/shared';
 import { SentryModule } from '@sentry/nestjs/setup';
 import packageJson from '../package.json';
+import { ActivityModule } from './app/activity/activity.module';
+import { AgentsModule } from './app/agents/agents.module';
 import { AnalyticsModule } from './app/analytics/analytics.module';
 import { AuthModule } from './app/auth/auth.module';
 import { BlueprintModule } from './app/blueprint/blueprint.module';
 import { BridgeModule } from './app/bridge/bridge.module';
 import { ChangeModule } from './app/change/change.module';
+import { ChannelConnectionsModule } from './app/channel-connections/channel-connections.module';
+import { ChannelEndpointsModule } from './app/channel-endpoints/channel-endpoints.module';
 import { ContentTemplatesModule } from './app/content-templates/content-templates.module';
+import { ContextsModule } from './app/contexts/contexts.module';
+import { DomainsModule } from './app/domains/domains.module';
+import { EnvironmentVariablesModule } from './app/environment-variables/environment-variables.module';
 import { EnvironmentsModuleV1 } from './app/environments-v1/environments-v1.module';
 import { EnvironmentsModule } from './app/environments-v2/environments.module';
 import { EventsModule } from './app/events/events.module';
@@ -26,24 +31,29 @@ import { HealthModule } from './app/health/health.module';
 import { InboundParseModule } from './app/inbound-parse/inbound-parse.module';
 import { InboxModule } from './app/inbox/inbox.module';
 import { IntegrationModule } from './app/integrations/integrations.module';
+import { InternalModule } from './app/internal/internal.module';
 import { InvitesModule } from './app/invites/invites.module';
-import { LayoutsModule } from './app/layouts/layouts.module';
+import { LayoutsV1Module } from './app/layouts-v1/layouts-v1.module';
+import { LayoutsV2Module } from './app/layouts-v2/layouts.module';
 import { MessagesModule } from './app/messages/messages.module';
 import { NotificationGroupsModule } from './app/notification-groups/notification-groups.module';
 import { NotificationModule } from './app/notifications/notification.module';
 import { OrganizationModule } from './app/organization/organization.module';
+import { OutboundWebhooksModule } from './app/outbound-webhooks/outbound-webhooks.module';
 import { PartnerIntegrationsModule } from './app/partner-integrations/partner-integrations.module';
 import { PreferencesModule } from './app/preferences';
 import { ApiRateLimitInterceptor } from './app/rate-limiting/guards';
 import { RateLimitingModule } from './app/rate-limiting/rate-limiting.module';
+import { AnalyticsLogsGuard } from './app/shared/framework/analytics-logs.guard';
+import { AnalyticsLogsInterceptor } from './app/shared/framework/analytics-logs.interceptor';
 import { IdempotencyInterceptor } from './app/shared/framework/idempotency.interceptor';
 import { ProductFeatureInterceptor } from './app/shared/interceptors/product-feature.interceptor';
 import { SharedModule } from './app/shared/shared.module';
+import { StepResolversModule } from './app/step-resolvers/step-resolvers.module';
 import { StorageModule } from './app/storage/storage.module';
-import { SubscribersModule } from './app/subscribers-v2/subscribers.module';
 import { SubscribersV1Module } from './app/subscribers/subscribersV1.module';
+import { SubscribersModule } from './app/subscribers-v2/subscribers.module';
 import { SupportModule } from './app/support/support.module';
-import { WebhooksModule } from './app/webhooks/webhooks.module';
 import { TenantModule } from './app/tenant/tenant.module';
 import { TestingModule } from './app/testing/testing.module';
 import { TopicsV1Module } from './app/topics-v1/topics-v1.module';
@@ -59,12 +69,27 @@ const enterpriseImports = (): Array<Type | DynamicModule | Promise<DynamicModule
   if (process.env.NOVU_ENTERPRISE === 'true' || process.env.CI_EE_TEST === 'true') {
     if (require('@novu/ee-translation')?.EnterpriseTranslationModule) {
       modules.push(require('@novu/ee-translation')?.EnterpriseTranslationModule);
+      modules.push(require('@novu/ee-translation')?.TranslationModule);
     }
+
     if (require('@novu/ee-billing')?.BillingModule) {
       modules.push(require('@novu/ee-billing')?.BillingModule.forRoot());
     }
+
+    if (require('@novu/ee-api')?.InboundWebhooksModule) {
+      modules.push(require('@novu/ee-api')?.InboundWebhooksModule);
+    }
+
+    if (require('@novu/ee-ai')?.AiModule) {
+      modules.push(require('@novu/ee-ai')?.AiModule);
+    }
+
+    if (require('@novu/ee-api')?.ConversationsModule) {
+      modules.push(require('@novu/ee-api')?.ConversationsModule);
+    }
+
     modules.push(SupportModule);
-    modules.push(WebhooksModule);
+    modules.push(OutboundWebhooksModule.forRoot());
   }
 
   return modules;
@@ -96,29 +121,38 @@ const baseModules: Array<Type | DynamicModule | Promise<DynamicModule> | Forward
   NotificationGroupsModule,
   ContentTemplatesModule,
   OrganizationModule,
+  ActivityModule,
+  AgentsModule,
+  DomainsModule.forRoot(),
   UserModule,
   IntegrationModule,
+  InternalModule,
   ChangeModule,
+  ContextsModule,
   SubscribersV1Module,
   SubscribersModule,
   FeedsModule,
-  LayoutsModule,
+  LayoutsV1Module,
+  LayoutsV2Module,
   MessagesModule,
   PartnerIntegrationsModule,
   TopicsV1Module,
   TopicsV2Module,
   BlueprintModule,
   TenantModule,
+  EnvironmentVariablesModule,
   StorageModule,
   WorkflowOverridesModule,
   RateLimitingModule,
-  WidgetsModule,
   TracingModule.register(packageJson.name, packageJson.version),
   BridgeModule,
   PreferencesModule,
   WorkflowModule,
   EnvironmentsModule,
   NovuModule,
+  ChannelConnectionsModule,
+  ChannelEndpointsModule,
+  StepResolversModule,
 ];
 
 const enterpriseModules = enterpriseImports();
@@ -132,6 +166,10 @@ const modules = baseModules.concat(enterpriseModules);
 
 const providers: Provider[] = [
   {
+    provide: APP_GUARD,
+    useClass: AnalyticsLogsGuard,
+  },
+  {
     provide: APP_INTERCEPTOR,
     useClass: ApiRateLimitInterceptor,
   },
@@ -143,6 +181,10 @@ const providers: Provider[] = [
   {
     provide: APP_INTERCEPTOR,
     useClass: IdempotencyInterceptor,
+  },
+  {
+    provide: APP_INTERCEPTOR,
+    useClass: AnalyticsLogsInterceptor,
   },
   cacheService,
 ];
@@ -170,7 +212,7 @@ modules.push(
         process.env.NOVU_STRICT_AUTHENTICATION_ENABLED === 'true',
     }),
     controllerDecorators: [ApiExcludeController()],
-    workflows: [usageLimitsWorkflow],
+    workflows: [usageLimitsWorkflow, usageReportWorkflow],
   })
 );
 

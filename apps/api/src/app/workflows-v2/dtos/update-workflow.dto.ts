@@ -1,22 +1,21 @@
 import { ApiExtraModels, ApiProperty, ApiPropertyOptional, getSchemaPath } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsEnum, IsOptional, ValidateNested } from 'class-validator';
+import { WorkflowCommonsFields } from '@novu/application-generic';
+import { ResourceOriginEnum, SeverityLevelEnum, StepTypeEnum } from '@novu/shared';
 import { Type } from 'class-transformer';
-import { StepTypeEnum, WorkflowOriginEnum } from '@novu/shared';
-import { WorkflowCommonsFields } from './workflow-commons.dto';
-import { PreferencesRequestDto } from './preferences.request.dto';
+import { IsArray, IsEnum, IsOptional, ValidateNested } from 'class-validator';
 import {
-  StepUpsertDto,
   BaseStepConfigDto,
-  InAppStepUpsertDto,
-  EmailStepUpsertDto,
-  SmsStepUpsertDto,
-  PushStepUpsertDto,
   ChatStepUpsertDto,
+  CustomStepUpsertDto,
   DelayStepUpsertDto,
   DigestStepUpsertDto,
-  CustomStepUpsertDto,
+  EmailStepUpsertDto,
+  HttpRequestStepUpsertDto,
+  InAppStepUpsertDto,
+  PushStepUpsertDto,
+  SmsStepUpsertDto,
 } from './create-step.dto';
-import { IsValidJsonSchema } from '../../shared/validators/json-schema.validator';
+import { PreferencesRequestDto } from './preferences.request.dto';
 
 @ApiExtraModels(
   InAppStepUpsertDto,
@@ -26,7 +25,8 @@ import { IsValidJsonSchema } from '../../shared/validators/json-schema.validator
   ChatStepUpsertDto,
   DelayStepUpsertDto,
   DigestStepUpsertDto,
-  CustomStepUpsertDto
+  CustomStepUpsertDto,
+  HttpRequestStepUpsertDto
 )
 export class UpdateWorkflowDto extends WorkflowCommonsFields {
   @ApiPropertyOptional({
@@ -49,6 +49,7 @@ export class UpdateWorkflowDto extends WorkflowCommonsFields {
         { $ref: getSchemaPath(DelayStepUpsertDto) },
         { $ref: getSchemaPath(DigestStepUpsertDto) },
         { $ref: getSchemaPath(CustomStepUpsertDto) },
+        { $ref: getSchemaPath(HttpRequestStepUpsertDto) },
       ],
       discriminator: {
         propertyName: 'type',
@@ -61,6 +62,7 @@ export class UpdateWorkflowDto extends WorkflowCommonsFields {
           [StepTypeEnum.DELAY]: getSchemaPath(DelayStepUpsertDto),
           [StepTypeEnum.DIGEST]: getSchemaPath(DigestStepUpsertDto),
           [StepTypeEnum.CUSTOM]: getSchemaPath(CustomStepUpsertDto),
+          [StepTypeEnum.HTTP_REQUEST]: getSchemaPath(HttpRequestStepUpsertDto),
         },
       },
     },
@@ -79,6 +81,7 @@ export class UpdateWorkflowDto extends WorkflowCommonsFields {
         { name: StepTypeEnum.DELAY, value: DelayStepUpsertDto },
         { name: StepTypeEnum.DIGEST, value: DigestStepUpsertDto },
         { name: StepTypeEnum.CUSTOM, value: CustomStepUpsertDto },
+        { name: StepTypeEnum.HTTP_REQUEST, value: HttpRequestStepUpsertDto },
       ],
     },
     keepDiscriminatorProperty: true,
@@ -92,6 +95,7 @@ export class UpdateWorkflowDto extends WorkflowCommonsFields {
     | DelayStepUpsertDto
     | DigestStepUpsertDto
     | CustomStepUpsertDto
+    | HttpRequestStepUpsertDto
   )[];
 
   @ApiProperty({
@@ -104,28 +108,19 @@ export class UpdateWorkflowDto extends WorkflowCommonsFields {
 
   @ApiProperty({
     description: 'Origin of the workflow',
-    enum: [...Object.values(WorkflowOriginEnum)],
-    enumName: 'WorkflowOriginEnum',
+    enum: [...Object.values(ResourceOriginEnum)],
+    enumName: 'ResourceOriginEnum',
   })
-  @IsEnum(WorkflowOriginEnum)
-  origin: WorkflowOriginEnum;
+  @IsEnum(ResourceOriginEnum)
+  origin: ResourceOriginEnum;
 
   @ApiPropertyOptional({
-    description: 'The payload JSON Schema for the workflow',
-    type: 'object',
-    additionalProperties: true,
+    description: 'Severity of the workflow',
+    required: false,
+    enum: [...Object.values(SeverityLevelEnum)],
+    enumName: 'SeverityLevelEnum',
   })
   @IsOptional()
-  @IsValidJsonSchema({
-    message: 'payloadSchema must be a valid JSON schema',
-  })
-  payloadSchema?: object;
-
-  @ApiPropertyOptional({
-    description: 'Enable or disable payload schema validation',
-    type: 'boolean',
-  })
-  @IsOptional()
-  @IsBoolean()
-  validatePayload?: boolean;
+  @IsEnum(SeverityLevelEnum)
+  severity?: SeverityLevelEnum;
 }

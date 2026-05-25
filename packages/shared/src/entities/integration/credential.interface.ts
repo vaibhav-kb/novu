@@ -43,6 +43,19 @@ export interface ICredentials {
   state?: string;
   externalLink?: string;
   phoneNumberIdentification?: string;
+  businessAccountId?: string;
   channelId?: string;
   apiVersion?: string;
+  appSid?: string;
+  senderId?: string;
+  AppIOBaseUrl?: string;
+  AppIOSubscriptionId?: string;
+  AppIOBearerToken?: string;
+  AppIOOriginalSignature?: string;
+  servicePlanId?: string;
+  tenantId?: string;
+  signingSecret?: string;
+  outboundIntegrationId?: string;
+  useFromAddressOverride?: boolean;
+  fromAddressOverride?: string;
 }

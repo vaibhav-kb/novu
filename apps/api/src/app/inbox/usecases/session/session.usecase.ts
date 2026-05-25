@@ -1,71 +1,91 @@
 import {
-  Injectable,
-  NotFoundException,
   BadRequestException,
+  Injectable,
   InternalServerErrorException,
+  NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { createHash } from 'crypto';
-import { differenceInHours } from 'date-fns';
 import {
   AnalyticsService,
   CreateOrUpdateSubscriberCommand,
   CreateOrUpdateSubscriberUseCase,
   encryptApiKey,
+  FeatureFlagsService,
+  GetSubscriberSchedule,
+  GetSubscriberScheduleCommand,
+  generateTimestampHex,
   LogDecorator,
   PinoLogger,
   SelectIntegration,
   SelectIntegrationCommand,
   shortId,
-  UpsertControlValuesUseCase,
   UpsertControlValuesCommand,
-  FeatureFlagsService,
+  UpsertControlValuesUseCase,
 } from '@novu/application-generic';
 import {
   CommunityOrganizationRepository,
   CommunityUserRepository,
+  ContextRepository,
   EnvironmentEntity,
   EnvironmentRepository,
   IntegrationRepository,
-  NotificationTemplateRepository,
+  MessageRepository,
   MessageTemplateRepository,
+  NotificationTemplateRepository,
   PreferencesRepository,
+  SubscriberEntity,
 } from '@novu/dal';
 import {
   ApiServiceLevelEnum,
   ChannelTypeEnum,
+  ContextPayload,
+  ControlValuesLevelEnum,
+  CustomDataType,
+  EnvironmentTypeEnum,
+  FeatureFlagsKeysEnum,
   FeatureNameEnum,
   getFeatureForTierAsNumber,
   InAppProviderIdEnum,
-  CustomDataType,
-  WorkflowTypeEnum,
-  WorkflowOriginEnum,
-  StepTypeEnum,
+  PreferenceLevelEnum,
   PreferencesTypeEnum,
-  FeatureFlagsKeysEnum,
+  ResourceOriginEnum,
+  ResourceTypeEnum,
+  Schedule,
+  StepTypeEnum,
 } from '@novu/shared';
+import { createHash } from 'crypto';
+import { differenceInHours } from 'date-fns';
 import { AuthService } from '../../../auth/services/auth.service';
-import { SubscriberSessionResponseDto } from '../../dtos/subscriber-session-response.dto';
-import { SubscriberDto, SubscriberSessionRequestDto } from '../../dtos/subscriber-session-request.dto';
-import { AnalyticsEventsEnum } from '../../utils';
-import { validateHmacEncryption } from '../../utils/encryption';
-import { NotificationsCountCommand } from '../notifications-count/notifications-count.command';
-import { NotificationsCount } from '../notifications-count/notifications-count.usecase';
-import { SessionCommand } from './session.command';
-import { isHmacValid } from '../../../shared/helpers/is-valid-hmac';
 import { EnvironmentResponseDto } from '../../../environments-v1/dtos/environment-response.dto';
-import { CreateNovuIntegrations } from '../../../integrations/usecases/create-novu-integrations/create-novu-integrations.usecase';
 import { GenerateUniqueApiKey } from '../../../environments-v1/usecases/generate-unique-api-key/generate-unique-api-key.usecase';
 import { CreateNovuIntegrationsCommand } from '../../../integrations/usecases/create-novu-integrations/create-novu-integrations.command';
-import { GetOrganizationSettings } from '../../../organization/usecases/get-organization-settings/get-organization-settings.usecase';
+import { CreateNovuIntegrations } from '../../../integrations/usecases/create-novu-integrations/create-novu-integrations.usecase';
 import { GetOrganizationSettingsCommand } from '../../../organization/usecases/get-organization-settings/get-organization-settings.command';
+import { GetOrganizationSettings } from '../../../organization/usecases/get-organization-settings/get-organization-settings.usecase';
+import { ScheduleDto } from '../../../shared/dtos/schedule';
+import { isHmacValid } from '../../../shared/helpers/is-valid-hmac';
+import { SubscriberDto, SubscriberSessionRequestDto } from '../../dtos/subscriber-session-request.dto';
+import { SubscriberSessionResponseDto } from '../../dtos/subscriber-session-response.dto';
+import {
+  AnalyticsEventsEnum,
+  KEYLESS_ENVIRONMENT_PREFIX,
+  KEYLESS_SUBSCRIBER_ID,
+  KEYLESS_WORKFLOW_IDENTIFIER,
+} from '../../utils';
+import { validateContextHmacEncryption, validateHmacEncryption } from '../../utils/encryption';
+import { NotificationsCountCommand } from '../notifications-count/notifications-count.command';
+import { NotificationsCount } from '../notifications-count/notifications-count.usecase';
+import { UpdatePreferencesCommand } from '../update-preferences/update-preferences.command';
+import { UpdatePreferences } from '../update-preferences/update-preferences.usecase';
+import { SessionCommand } from './session.command';
 
 const ALLOWED_ORIGINS_REGEX = new RegExp(process.env.FRONT_BASE_URL || '');
 const KEYLESS_RETENTION_TIME_IN_HOURS = parseInt(process.env.KEYLESS_RETENTION_TIME_IN_HOURS || '', 10) || 24;
+const MAX_NOTIFICATIONS_COUNT = 100;
 
 @Injectable()
 export class Session {
-  private readonly KEYLESS_ENVIRONMENT_PREFIX = 'pk_keyless_';
+  private readonly KEYLESS_ENVIRONMENT_PREFIX = KEYLESS_ENVIRONMENT_PREFIX;
 
   constructor(
     private environmentRepository: EnvironmentRepository,
@@ -77,16 +97,20 @@ export class Session {
     private integrationRepository: IntegrationRepository,
     private organizationRepository: CommunityOrganizationRepository,
     private communityOrganizationRepository: CommunityOrganizationRepository,
+    private contextRepository: ContextRepository,
     private generateUniqueApiKey: GenerateUniqueApiKey,
     private createNovuIntegrationsUsecase: CreateNovuIntegrations,
     private communityUserRepository: CommunityUserRepository,
     private notificationTemplateRepository: NotificationTemplateRepository,
     private messageTemplateRepository: MessageTemplateRepository,
+    private messageRepository: MessageRepository,
     private preferencesRepository: PreferencesRepository,
     private upsertControlValuesUseCase: UpsertControlValuesUseCase,
     private getOrganizationSettingsUsecase: GetOrganizationSettings,
     private logger: PinoLogger,
-    private featureFlagsService: FeatureFlagsService
+    private featureFlagsService: FeatureFlagsService,
+    private getSubscriberSchedule: GetSubscriberSchedule,
+    private updatePreferencesUsecase: UpdatePreferences
   ) {
     this.logger.setContext(this.constructor.name);
   }
@@ -123,7 +147,21 @@ export class Session {
         subscriberId: subscriber.subscriberId,
         subscriberHash: command.requestData.subscriberHash,
       });
+
+      if (command.requestData.context) {
+        validateContextHmacEncryption({
+          apiKey: environment.apiKeys[0].key,
+          context: command.requestData.context,
+          contextHash: command.requestData.contextHash,
+        });
+      }
     }
+
+    const contextKeys = await this.resolveContexts(
+      environment._id,
+      environment._organizationId,
+      command.requestData.context
+    );
 
     const subscriberEntity = await this.createSubscriber.execute(
       CreateOrUpdateSubscriberCommand.create({
@@ -135,6 +173,7 @@ export class Session {
         phone: subscriber.phone,
         email: subscriber.email,
         avatar: subscriber.avatar,
+        locale: subscriber.locale,
         data: subscriber.data as CustomDataType,
         timezone: subscriber.timezone,
         allowUpdate: isHmacValid(
@@ -150,6 +189,7 @@ export class Session {
       environmentName: environment.name,
       _subscriber: subscriberEntity._id,
       origin: command.requestData.applicationIdentifier ? command.origin : 'keyless',
+      context: contextKeys,
     });
 
     const { data } = await this.notificationsCount.execute(
@@ -158,19 +198,64 @@ export class Session {
         environmentId: environment._id,
         subscriberId: subscriber.subscriberId,
         filters: [{ read: false, snoozed: false }],
+        subscriber: subscriberEntity,
+        contextKeys,
       })
     );
     const [{ count: totalUnreadCount }] = data;
 
-    const token = await this.authService.getSubscriberWidgetToken(subscriberEntity);
-
-    const { removeNovuBranding } = await this.getOrganizationSettingsUsecase.execute(
-      GetOrganizationSettingsCommand.create({
-        organizationId: environment._organizationId,
-      })
+    // get severity-based unread counts
+    const severityCounts = await this.messageRepository.getCountBySeverity(
+      environment._id,
+      subscriberEntity._id,
+      ChannelTypeEnum.IN_APP,
+      { read: false, snoozed: false },
+      { limit: MAX_NOTIFICATIONS_COUNT },
+      contextKeys
     );
 
-    const maxSnoozeDurationHours = await this.getMaxSnoozeDurationHours(environment);
+    const unreadCount: SubscriberSessionResponseDto['unreadCount'] = {
+      total: totalUnreadCount,
+      severity: {
+        high: 0,
+        medium: 0,
+        low: 0,
+        none: 0,
+      },
+    };
+
+    for (const { severity, count } of severityCounts) {
+      if (severity in unreadCount.severity) {
+        unreadCount.severity[severity] = count;
+      }
+    }
+
+    const [token, organization] = await Promise.all([
+      this.authService.getSubscriberWidgetToken(subscriberEntity, contextKeys),
+      this.organizationRepository.findById(environment._organizationId),
+    ]);
+
+    if (!organization) {
+      throw new NotFoundException('Organization not found');
+    }
+
+    const schedulePromise = this.createDefaultSchedule({
+      environment,
+      defaultSchedule: command.requestData.defaultSchedule,
+      subscriber: subscriberEntity,
+      contextKeys,
+    });
+
+    const [{ removeNovuBranding }, maxSnoozeDurationHours, schedule] = await Promise.all([
+      this.getOrganizationSettingsUsecase.execute(
+        GetOrganizationSettingsCommand.create({
+          organizationId: environment._organizationId,
+          organization,
+        })
+      ),
+      this.getMaxSnoozeDurationHours(organization.apiServiceLevel),
+      schedulePromise,
+    ]);
 
     /**
      * We want to prevent the playground inbox demo from marking the integration as connected
@@ -201,10 +286,69 @@ export class Session {
       applicationIdentifier: environment.identifier,
       token,
       totalUnreadCount,
+      unreadCount,
       removeNovuBranding,
       maxSnoozeDurationHours,
-      isDevelopmentMode: environment.name.toLowerCase() !== 'production',
+      isDevelopmentMode: this.isInboxDevelopmentMode(environment),
+      schedule,
+      contextKeys,
     };
+  }
+
+  private async createDefaultSchedule({
+    environment,
+    defaultSchedule,
+    subscriber,
+    contextKeys,
+  }: {
+    environment: EnvironmentEntity;
+    defaultSchedule?: ScheduleDto;
+    subscriber: SubscriberEntity;
+    contextKeys: string[];
+  }): Promise<Schedule | undefined> {
+    const schedule = await this.getSubscriberSchedule.execute(
+      GetSubscriberScheduleCommand.create({
+        organizationId: environment._organizationId,
+        environmentId: environment._id,
+        _subscriberId: subscriber._id,
+        contextKeys,
+      })
+    );
+
+    if (schedule || !defaultSchedule) {
+      return schedule;
+    }
+
+    const updatedGlobalPreference = await this.updatePreferencesUsecase.execute(
+      UpdatePreferencesCommand.create({
+        organizationId: environment._organizationId,
+        environmentId: environment._id,
+        subscriber,
+        subscriberId: subscriber.subscriberId,
+        contextKeys,
+        level: PreferenceLevelEnum.GLOBAL,
+        includeInactiveChannels: false,
+        schedule: defaultSchedule,
+      })
+    );
+
+    return updatedGlobalPreference.schedule;
+  }
+
+  /**
+   * Live (production-type) environments must not show the Inbox "Development mode" footer,
+   * regardless of display name. Legacy orgs may lack `type`; fall back to the old name check.
+   */
+  private isInboxDevelopmentMode(environment: EnvironmentEntity): boolean {
+    if (environment.type === EnvironmentTypeEnum.PROD) {
+      return false;
+    }
+
+    if (environment.type === EnvironmentTypeEnum.DEV) {
+      return true;
+    }
+
+    return environment.name.toLowerCase() !== 'production';
   }
 
   private validateRequestData(requestData: SubscriberSessionRequestDto): void {
@@ -217,7 +361,7 @@ export class Session {
 
   private buildPlatformSubscriber(requestData: SubscriberSessionRequestDto): SubscriberDto {
     if (!requestData.applicationIdentifier || this.isKeylessApplication(requestData.applicationIdentifier)) {
-      return { subscriberId: 'keyless-subscriber-id' };
+      return { subscriberId: KEYLESS_SUBSCRIBER_ID };
     }
 
     return this.extractSubscriberInfo(requestData);
@@ -273,18 +417,32 @@ export class Session {
     return applicationIdentifier;
   }
 
-  private async getMaxSnoozeDurationHours(environment: EnvironmentEntity) {
+  private async resolveContexts(
+    environmentId: string,
+    organizationId: string,
+    context?: ContextPayload
+  ): Promise<string[]> {
+    if (!context) {
+      return [];
+    }
+
+    const contexts = await this.contextRepository.findOrCreateContextsFromPayload(
+      environmentId,
+      organizationId,
+      context
+    );
+
+    return contexts.map((context) => context.key);
+  }
+
+  private async getMaxSnoozeDurationHours(apiServiceLevel: ApiServiceLevelEnum) {
     if (process.env.NOVU_ENTERPRISE !== 'true') {
       return 0;
     }
 
-    const organization = await this.organizationRepository.findOne({
-      _id: environment._organizationId,
-    });
-
     const tierLimitMs = getFeatureForTierAsNumber(
       FeatureNameEnum.PLATFORM_MAX_SNOOZE_DURATION,
-      organization?.apiServiceLevel || ApiServiceLevelEnum.FREE,
+      apiServiceLevel || ApiServiceLevelEnum.FREE,
       true
     );
 
@@ -358,7 +516,7 @@ export class Session {
     const encryptedApiKey = encryptApiKey(key);
     const hashedApiKey = createHash('sha256').update(key).digest('hex');
 
-    const encodedDate = dateToTimestampHex(new Date());
+    const encodedDate = generateTimestampHex();
     const identifier = `${this.KEYLESS_ENVIRONMENT_PREFIX}${encodedDate}_${shortId(4)}`;
     const environment = await this.environmentRepository.create({
       _organizationId: organization._id,
@@ -557,8 +715,8 @@ export class Session {
       draft: false,
       critical: false,
       tags: [],
-      type: WorkflowTypeEnum.BRIDGE,
-      origin: WorkflowOriginEnum.NOVU_CLOUD,
+      type: ResourceTypeEnum.BRIDGE,
+      origin: ResourceOriginEnum.NOVU_CLOUD,
       steps: [
         {
           name: 'In-App Notification',
@@ -573,7 +731,7 @@ export class Session {
       triggers: [
         {
           type: 'event',
-          identifier: 'hello-world',
+          identifier: KEYLESS_WORKFLOW_IDENTIFIER,
           variables: [
             { name: 'subject', type: 'string' },
             { name: 'body', type: 'string' },
@@ -658,7 +816,8 @@ export class Session {
       UpsertControlValuesCommand.create({
         organizationId,
         environmentId,
-        notificationStepEntity: workflow.steps[0],
+        stepId: workflow.steps[0]._templateId,
+        level: ControlValuesLevelEnum.STEP_CONTROLS,
         workflowId: workflow._id,
         newControlValues: {
           body: '{{payload.body}}',
@@ -707,14 +866,6 @@ export class Session {
 
     return dto;
   }
-}
-
-function dateToTimestampHex(date) {
-  const timeInSeconds = Math.floor(date.getTime() / 1000);
-  const buffer = Buffer.alloc(4);
-  buffer.writeUInt32BE(timeInSeconds, 0);
-
-  return buffer.toString('hex');
 }
 
 function timestampHexToDate(timestampHex) {

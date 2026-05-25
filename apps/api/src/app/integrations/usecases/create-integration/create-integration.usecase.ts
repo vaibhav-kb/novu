@@ -1,36 +1,42 @@
-import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
-import shortid from 'shortid';
-import { DalException, IntegrationEntity, IntegrationQuery, IntegrationRepository } from '@novu/dal';
-import {
-  CHANNELS_WITH_PRIMARY,
-  ChannelTypeEnum,
-  EmailProviderIdEnum,
-  InAppProviderIdEnum,
-  providers,
-  slugify,
-  SmsProviderIdEnum,
-} from '@novu/shared';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
   AnalyticsService,
   areNovuEmailCredentialsSet,
+  areNovuSlackCredentialsSet,
   areNovuSmsCredentialsSet,
-  buildIntegrationKey,
   encryptCredentials,
-  InvalidateCacheService,
 } from '@novu/application-generic';
-
-import { CreateIntegrationCommand } from './create-integration.command';
+import {
+  DalException,
+  EnvironmentRepository,
+  IntegrationEntity,
+  IntegrationQuery,
+  IntegrationRepository,
+} from '@novu/dal';
+import {
+  CHANNELS_WITH_PRIMARY,
+  ChannelTypeEnum,
+  ChatProviderIdEnum,
+  EmailProviderIdEnum,
+  InAppProviderIdEnum,
+  providers,
+  SmsProviderIdEnum,
+  slugify,
+} from '@novu/shared';
+import shortid from 'shortid';
 import { CheckIntegrationCommand } from '../check-integration/check-integration.command';
 import { CheckIntegration } from '../check-integration/check-integration.usecase';
+import { ensureWhatsAppManagedCredentials } from '../whatsapp/whatsapp-credentials.utils';
+import { CreateIntegrationCommand } from './create-integration.command';
 
 @Injectable()
 export class CreateIntegration {
   @Inject()
   private checkIntegration: CheckIntegration;
   constructor(
-    private invalidateCache: InvalidateCacheService,
     private integrationRepository: IntegrationRepository,
-    private analyticsService: AnalyticsService
+    private analyticsService: AnalyticsService,
+    private environmentRepository: EnvironmentRepository
   ) {}
 
   private async calculatePriorityAndPrimary(command: CreateIntegrationCommand) {
@@ -84,7 +90,8 @@ export class CreateIntegration {
 
     if (
       (command.providerId === SmsProviderIdEnum.Novu && !areNovuSmsCredentialsSet()) ||
-      (command.providerId === EmailProviderIdEnum.Novu && !areNovuEmailCredentialsSet())
+      (command.providerId === EmailProviderIdEnum.Novu && !areNovuEmailCredentialsSet()) ||
+      (command.providerId === ChatProviderIdEnum.Novu && !areNovuSlackCredentialsSet())
     ) {
       throw new BadRequestException(`Creating Novu integration for ${command.providerId} provider is not allowed`);
     }
@@ -117,6 +124,14 @@ export class CreateIntegration {
   }
 
   async execute(command: CreateIntegrationCommand): Promise<IntegrationEntity> {
+    const environment = await this.environmentRepository.findByIdAndOrganization(
+      command.environmentId,
+      command.organizationId
+    );
+    if (!environment) {
+      throw new NotFoundException(`Environment with id ${command.environmentId} not found`);
+    }
+
     await this.validate(command);
 
     this.analyticsService.track('Create Integration - [Integrations]', command.userId, {
@@ -138,17 +153,16 @@ export class CreateIntegration {
         );
       }
 
-      await this.invalidateCache.invalidateQuery({
-        key: buildIntegrationKey().invalidate({
-          _organizationId: command.organizationId,
-        }),
-      });
-
       const providerIdCapitalized = `${command.providerId.charAt(0).toUpperCase()}${command.providerId.slice(1)}`;
       const defaultName =
         providers.find((provider) => provider.id === command.providerId)?.displayName ?? providerIdCapitalized;
       const name = command.name ?? defaultName;
       const identifier = command.identifier ?? `${slugify(name)}-${shortid.generate()}`;
+
+      const managedCredentials = ensureWhatsAppManagedCredentials({
+        providerId: command.providerId,
+        nextCredentials: command.credentials ?? {},
+      });
 
       const query: IntegrationQuery = {
         name,
@@ -157,9 +171,10 @@ export class CreateIntegration {
         _organizationId: command.organizationId,
         providerId: command.providerId,
         channel: command.channel,
-        credentials: encryptCredentials(command.credentials ?? {}),
+        credentials: encryptCredentials(managedCredentials),
         active: command.active,
         conditions: command.conditions,
+        configurations: command.configurations,
       };
 
       const isActiveAndChannelSupportsPrimary = command.active && CHANNELS_WITH_PRIMARY.includes(command.channel);

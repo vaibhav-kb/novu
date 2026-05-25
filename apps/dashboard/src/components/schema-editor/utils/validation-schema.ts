@@ -54,26 +54,28 @@ const baseJsonSchema: z.ZodType<any> = z
 
 // Defines an item in our editable property list
 const PropertyListItemSchema = z.object({
-  id: z.string().uuid(),
+  id: z.uuid(),
   keyName: z
     .string()
     .min(1, { message: 'Property name is required.' })
     .refine(
       (val) => {
         // For non-empty strings, enforce proper naming rules
-        return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(val);
+        return /^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(val);
       },
       {
-        message: 'Name must start with a letter or underscore, and contain only letters, numbers, or underscores.',
+        message:
+          'Name must start with a letter or underscore, and contain only letters, numbers, underscores, or hyphens.',
       }
     ),
-  definition: baseJsonSchema, // The schema definition for this property's value
+  definition: baseJsonSchema,
   isRequired: z.boolean().optional(),
+  isNullable: z.boolean().optional(),
 });
 export type PropertyListItem = z.infer<typeof PropertyListItemSchema>;
 
 // This is the overall shape of the form data for the SchemaEditor
-export const SchemaEditorFormValuesSchema = z.object({
+const SchemaEditorFormValuesSchema = z.object({
   propertyList: z.array(PropertyListItemSchema).superRefine((list, ctx) => {
     // Check for unique keyNames among properties
     const names = new Set<string>();

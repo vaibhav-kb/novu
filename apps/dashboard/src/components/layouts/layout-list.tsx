@@ -1,22 +1,35 @@
-import { HTMLAttributes, useEffect, useState } from 'react';
-import { RiAddCircleLine } from 'react-icons/ri';
-import { DirectionEnum, PermissionsEnum } from '@novu/shared';
-
-import { cn } from '@/utils/ui';
-import { CursorPagination } from '@/components/cursor-pagination';
-import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/primitives/table';
+import { ApiServiceLevelEnum, DirectionEnum } from '@novu/shared';
+import { HTMLAttributes } from 'react';
 import {
   LayoutsFilter,
   LayoutsSortableColumn,
   LayoutsUrlState,
   useLayoutsUrlState,
 } from '@/components/layouts/hooks/use-layouts-url-state';
+import { usePersistedPageSize } from '@/hooks/use-persisted-page-size';
+
+const LAYOUTS_TABLE_ID = 'layouts-list';
+
 import { LayoutListBlank } from '@/components/layouts/layout-list-blank';
-import { ListNoResults } from '@/components/list-no-results';
 import { LayoutRow, LayoutRowSkeleton } from '@/components/layouts/layout-row';
 import { LayoutsFilters } from '@/components/layouts/layouts-filters';
+import { ListNoResults } from '@/components/list-no-results';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/primitives/table';
+import { TablePaginationFooter } from '@/components/primitives/table-pagination-footer';
+import { IS_SELF_HOSTED } from '@/config';
 import { useFetchLayouts } from '@/hooks/use-fetch-layouts';
-import { PermissionButton } from '@/components/primitives/permission-button';
+import { useFetchSubscription } from '@/hooks/use-fetch-subscription';
+import { cn } from '@/utils/ui';
+import { CreateLayoutButton } from './create-layout-btn';
+import { LayoutsListUpgradeCta } from './layouts-list-upgrade-cta';
 
 type LayoutListFiltersProps = HTMLAttributes<HTMLDivElement> &
   Pick<LayoutsUrlState, 'filterValues' | 'handleFiltersChange' | 'resetFilters'> & {
@@ -27,7 +40,7 @@ const LayoutListWrapper = (props: LayoutListFiltersProps) => {
   const { className, children, filterValues, handleFiltersChange, resetFilters, isFetching, ...rest } = props;
 
   return (
-    <div className={cn('flex h-full flex-col p-2', className)} {...rest}>
+    <div className={cn('flex h-full flex-col', className)} {...rest}>
       <div className="flex items-center justify-between">
         <LayoutsFilters
           onFiltersChange={handleFiltersChange}
@@ -36,19 +49,7 @@ const LayoutListWrapper = (props: LayoutListFiltersProps) => {
           isFetching={isFetching}
           className="py-2.5"
         />
-        <PermissionButton
-          permission={PermissionsEnum.WORKFLOW_WRITE}
-          mode="gradient"
-          className="rounded-l-lg border-none px-1.5 py-2 text-white"
-          variant="primary"
-          size="xs"
-          leadingIcon={RiAddCircleLine}
-          onClick={() => {
-            // TODO: Implement create layout drawer
-          }}
-        >
-          Create layout
-        </PermissionButton>
+        <CreateLayoutButton disabled={isFetching} />
       </div>
       {children}
     </div>
@@ -57,17 +58,34 @@ const LayoutListWrapper = (props: LayoutListFiltersProps) => {
 
 type LayoutListTableProps = HTMLAttributes<HTMLTableElement> & {
   toggleSort: ReturnType<typeof useLayoutsUrlState>['toggleSort'];
-  orderBy?: LayoutsSortableColumn;
+  orderBy: LayoutsSortableColumn;
   orderDirection?: DirectionEnum;
+  paginationProps?: {
+    pageSize: number;
+    currentPageItemsCount: number;
+    onPreviousPage: () => void;
+    onNextPage: () => void;
+    onPageSizeChange: (pageSize: number) => void;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+    totalCount?: number;
+  };
 };
 
 const LayoutListTable = (props: LayoutListTableProps) => {
-  const { children, orderBy, orderDirection, toggleSort, ...rest } = props;
+  const { toggleSort, children, orderBy, orderDirection, paginationProps, ...rest } = props;
+
   return (
     <Table {...rest}>
       <TableHeader>
         <TableRow>
-          <TableHead>Layout</TableHead>
+          <TableHead
+            sortable
+            sortDirection={orderBy === 'name' ? orderDirection : false}
+            onSort={() => toggleSort('name')}
+          >
+            Layout
+          </TableHead>
           <TableHead
             sortable
             sortDirection={orderBy === 'createdAt' ? orderDirection : false}
@@ -86,6 +104,25 @@ const LayoutListTable = (props: LayoutListTableProps) => {
         </TableRow>
       </TableHeader>
       <TableBody>{children}</TableBody>
+      {paginationProps && (
+        <TableFooter>
+          <TableRow>
+            <TableCell colSpan={4} className="p-0">
+              <TablePaginationFooter
+                pageSize={paginationProps.pageSize}
+                currentPageItemsCount={paginationProps.currentPageItemsCount}
+                onPreviousPage={paginationProps.onPreviousPage}
+                onNextPage={paginationProps.onNextPage}
+                onPageSizeChange={paginationProps.onPageSizeChange}
+                hasPreviousPage={paginationProps.hasPreviousPage}
+                hasNextPage={paginationProps.hasNextPage}
+                itemName="layouts"
+                totalCount={paginationProps.totalCount}
+              />
+            </TableCell>
+          </TableRow>
+        </TableFooter>
+      )}
     </Table>
   );
 };
@@ -93,29 +130,46 @@ const LayoutListTable = (props: LayoutListTableProps) => {
 type LayoutListProps = HTMLAttributes<HTMLDivElement>;
 
 export const LayoutList = (props: LayoutListProps) => {
-  const [nextPageAfter, setNextPageAfter] = useState<string | undefined>(undefined);
-  const [previousPageBefore, setPreviousPageBefore] = useState<string | undefined>(undefined);
-  const { filterValues, handleFiltersChange, toggleSort, resetFilters, handleNext, handlePrevious, handleFirst } =
-    useLayoutsUrlState({
-      after: nextPageAfter,
-      before: previousPageBefore,
-    });
+  const { filterValues, handleFiltersChange, toggleSort, resetFilters } = useLayoutsUrlState();
+  const { setPageSize: setPersistedPageSize } = usePersistedPageSize({
+    tableId: LAYOUTS_TABLE_ID,
+    defaultPageSize: 10,
+  });
   const areFiltersApplied = (Object.keys(filterValues) as (keyof LayoutsFilter)[]).some(
-    (key) => ['query', 'before', 'after'].includes(key) && filterValues[key] !== ''
+    (key) => ['query'].includes(key) && filterValues[key] !== ''
   );
-  const limit = 10;
 
-  const { data, isPending, isFetching } = useFetchLayouts(filterValues);
+  const { data, isPending, isFetching } = useFetchLayouts({
+    limit: filterValues.limit,
+    offset: filterValues.offset,
+    orderBy: filterValues.orderBy,
+    orderDirection: filterValues.orderDirection,
+    query: filterValues.query,
+  });
 
-  useEffect(() => {
-    if (data?.next) {
-      setNextPageAfter(data.next);
-    }
+  const { subscription } = useFetchSubscription();
+  const tier = subscription?.apiServiceLevel || ApiServiceLevelEnum.FREE;
 
-    if (data?.previous) {
-      setPreviousPageBefore(data.previous);
-    }
-  }, [data]);
+  const currentPage = Math.floor(filterValues.offset / filterValues.limit) + 1;
+  const totalPages = Math.ceil((data?.totalCount || 0) / filterValues.limit);
+
+  const handlePreviousPage = () => {
+    const newOffset = Math.max(0, filterValues.offset - filterValues.limit);
+    handleFiltersChange({ offset: newOffset });
+  };
+
+  const handleNextPage = () => {
+    const newOffset = filterValues.offset + filterValues.limit;
+    handleFiltersChange({ offset: newOffset });
+  };
+
+  const handlePageSizeChange = (newPageSize: number) => {
+    setPersistedPageSize(newPageSize);
+    handleFiltersChange({
+      limit: newPageSize,
+      offset: 0,
+    });
+  };
 
   if (isPending) {
     return (
@@ -131,7 +185,7 @@ export const LayoutList = (props: LayoutListProps) => {
           orderDirection={filterValues.orderDirection}
           toggleSort={toggleSort}
         >
-          {new Array(limit).fill(0).map((_, index) => (
+          {new Array(10).fill(0).map((_, index) => (
             <LayoutRowSkeleton key={index} />
           ))}
         </LayoutListTable>
@@ -139,7 +193,11 @@ export const LayoutList = (props: LayoutListProps) => {
     );
   }
 
-  if (!areFiltersApplied && !data?.data.length) {
+  if (!IS_SELF_HOSTED && tier === ApiServiceLevelEnum.FREE && data?.layouts.length === 1) {
+    return <LayoutsListUpgradeCta />;
+  }
+
+  if (!areFiltersApplied && !data?.layouts.length) {
     return (
       <LayoutListWrapper
         filterValues={filterValues}
@@ -153,7 +211,7 @@ export const LayoutList = (props: LayoutListProps) => {
     );
   }
 
-  if (!data?.data.length) {
+  if (!data?.layouts.length) {
     return (
       <LayoutListWrapper
         filterValues={filterValues}
@@ -182,21 +240,21 @@ export const LayoutList = (props: LayoutListProps) => {
         orderBy={filterValues.orderBy}
         orderDirection={filterValues.orderDirection}
         toggleSort={toggleSort}
+        paginationProps={{
+          pageSize: filterValues.limit,
+          currentPageItemsCount: data.layouts.length,
+          onPreviousPage: handlePreviousPage,
+          onNextPage: handleNextPage,
+          onPageSizeChange: handlePageSizeChange,
+          hasPreviousPage: filterValues.offset > 0,
+          hasNextPage: currentPage < totalPages,
+          totalCount: data.totalCount,
+        }}
       >
-        {data.data.map((layout) => (
+        {data.layouts.map((layout) => (
           <LayoutRow key={layout._id} layout={layout} />
         ))}
       </LayoutListTable>
-
-      {!!(data.next || data.previous) && (
-        <CursorPagination
-          hasNext={!!data.next}
-          hasPrevious={!!data.previous}
-          onNext={handleNext}
-          onPrevious={handlePrevious}
-          onFirst={handleFirst}
-        />
-      )}
     </LayoutListWrapper>
   );
 };

@@ -1,6 +1,6 @@
+import { useCallback, useMemo, useState } from 'react';
 import { UnsavedChangesAlertDialog } from '@/components/unsaved-changes-alert-dialog';
 import { useBeforeUnload } from '@/hooks/use-before-unload';
-import { useCallback, useMemo, useState } from 'react';
 import { useFindDirtyForm } from './use-find-dirty-form';
 
 type UseFormProtectionProps<T> = {
@@ -36,11 +36,12 @@ export function useFormProtection<T>(props: UseFormProtectionProps<T>) {
           setPendingChange(null);
         }}
         onProceed={() => {
+          setShowAlert(false);
+        }}
+        onExitComplete={() => {
           if (pendingChange) {
             onValueChange(pendingChange.value);
           }
-
-          setShowAlert(false);
           setPendingChange(null);
         }}
       />

@@ -1,8 +1,4 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { addBreadcrumb } from '@sentry/node';
-import { IntegrationEntity, OrganizationRepository } from '@novu/dal';
-import { ChannelTypeEnum, EmailProviderIdEnum, IEmailOptions, WorkflowOriginEnum } from '@novu/shared';
-
 import {
   AnalyticsService,
   CompileEmailTemplate,
@@ -10,11 +6,15 @@ import {
   GetNovuProviderCredentials,
   InstrumentUsecase,
   MailFactory,
+  PreviewStep,
+  PreviewStepCommand,
   SelectIntegration,
   SelectIntegrationCommand,
 } from '@novu/application-generic';
+import { IntegrationEntity, OrganizationRepository } from '@novu/dal';
+import { ChannelTypeEnum, EmailProviderIdEnum, IEmailOptions, ResourceOriginEnum } from '@novu/shared';
+import { addBreadcrumb } from '@sentry/node';
 import { SendTestEmailCommand } from './send-test-email.command';
-import { PreviewStep, PreviewStepCommand } from '../../../bridge/usecases/preview-step';
 
 @Injectable()
 export class SendTestEmail {
@@ -101,7 +101,7 @@ export class SendTestEmail {
           environmentId: command.environmentId,
           organizationId: command.organizationId,
           userId: command.userId,
-          workflowOrigin: WorkflowOriginEnum.EXTERNAL,
+          workflowOrigin: ResourceOriginEnum.EXTERNAL,
         })
       );
 
@@ -154,7 +154,6 @@ export class SendTestEmail {
 
   private getSystemVariables(variableType: 'subscriber' | 'step' | 'branding', command: SendTestEmailCommand) {
     const variables = {};
-    // eslint-disable-next-line guard-for-in
     for (const variable in command.payload) {
       const [type, names] = variable.includes('.') ? variable.split('.') : variable;
       if (type === variableType) {

@@ -1,26 +1,25 @@
 import { Injectable } from '@nestjs/common';
-import { parseExpression as parseCronExpression } from 'cron-parser';
-import { addYears, differenceInMilliseconds, isAfter } from 'date-fns';
-
+import { CommunityOrganizationRepository, OrganizationEntity } from '@novu/dal';
 import {
   ApiServiceLevelEnum,
+  castUnitToDigestUnitEnum,
   DigestUnitEnum,
   FeatureFlagsKeysEnum,
   FeatureNameEnum,
   getFeatureForTierAsNumber,
   StepTypeEnum,
 } from '@novu/shared';
-import { CommunityOrganizationRepository, OrganizationEntity } from '@novu/dal';
-
+import { parseExpression as parseCronExpression } from 'cron-parser';
+import { addYears, differenceInMilliseconds, isAfter } from 'date-fns';
+import { InstrumentUsecase } from '../../instrumentation';
+import { FeatureFlagsService } from '../../services';
+import { MIN_VALIDATION_LIMITS, SYSTEM_LIMITS } from '../../services/resource-validator.service';
 import { TierRestrictionsValidateCommand } from './tier-restrictions-validate.command';
 import {
   ErrorEnum,
   TierRestrictionsValidateResponse,
   TierValidationError,
 } from './tier-restrictions-validate.response';
-import { InstrumentUsecase } from '../../instrumentation';
-import { FeatureFlagsService } from '../../services';
-import { SYSTEM_LIMITS, MIN_VALIDATION_LIMITS } from '../../services/resource-validator.service';
 
 @Injectable()
 export class TierRestrictionsValidateUsecase {
@@ -33,7 +32,7 @@ export class TierRestrictionsValidateUsecase {
   async execute(command: TierRestrictionsValidateCommand): Promise<TierRestrictionsValidateResponse> {
     const { stepType } = command;
 
-    if (!isDigestOrDelay(stepType)) {
+    if (!isDigestDelayOrThrottle(stepType)) {
       return [];
     }
 
@@ -43,8 +42,12 @@ export class TierRestrictionsValidateUsecase {
       throw new Error(`Organization not found: ${command.organizationId}`);
     }
 
-    if (isCronExpression(command.cron)) {
-      const maxDelayMs = await this.getMaxDelayInMs(command, organization, stepType);
+    if (stepType !== StepTypeEnum.THROTTLE && isCronExpression(command.cron)) {
+      const maxDelayMs = await this.getMaxDelayInMs(
+        command,
+        organization,
+        stepType as StepTypeEnum.DELAY | StepTypeEnum.DIGEST
+      );
 
       if (this.isCronDeltaDeferDurationExceededTier(command.cron, maxDelayMs)) {
         return [
@@ -61,17 +64,40 @@ export class TierRestrictionsValidateUsecase {
       return [];
     }
 
-    if (isRegularDeferAction(command)) {
+    if (stepType !== StepTypeEnum.THROTTLE && isRegularDeferAction(command)) {
       const deferDurationMs = calculateDeferDuration(command);
 
       if (deferDurationMs < MIN_VALIDATION_LIMITS.DEFER_DURATION_MS) {
         return [];
       }
 
-      const maxDelayMs = await this.getMaxDelayInMs(command, organization, stepType);
+      const maxDelayMs = await this.getMaxDelayInMs(
+        command,
+        organization,
+        stepType as StepTypeEnum.DELAY | StepTypeEnum.DIGEST
+      );
 
       const amountIssue = buildIssue(deferDurationMs, maxDelayMs, ErrorEnum.TIER_LIMIT_EXCEEDED, 'amount');
       const unitIssue = buildIssue(deferDurationMs, maxDelayMs, ErrorEnum.TIER_LIMIT_EXCEEDED, 'unit');
+
+      return [amountIssue, unitIssue].filter(Boolean);
+    }
+
+    if (stepType === StepTypeEnum.DELAY && isDynamicDelayAction(command)) {
+      return [];
+    }
+
+    if (stepType === StepTypeEnum.THROTTLE && isRegularThrottleAction(command)) {
+      const throttleDurationMs = calculateThrottleDuration(command);
+
+      if (throttleDurationMs < MIN_VALIDATION_LIMITS.DEFER_DURATION_MS) {
+        return [];
+      }
+
+      const maxThrottleMs = await this.getMaxThrottleInMs(command, organization);
+
+      const amountIssue = buildIssue(throttleDurationMs, maxThrottleMs, ErrorEnum.TIER_LIMIT_EXCEEDED, 'amount');
+      const unitIssue = buildIssue(throttleDurationMs, maxThrottleMs, ErrorEnum.TIER_LIMIT_EXCEEDED, 'unit');
 
       return [amountIssue, unitIssue].filter(Boolean);
     }
@@ -101,6 +127,39 @@ export class TierRestrictionsValidateUsecase {
       stepType === StepTypeEnum.DELAY
         ? FeatureNameEnum.PLATFORM_MAX_DELAY_DURATION
         : FeatureNameEnum.PLATFORM_MAX_DIGEST_WINDOW_TIME,
+      organization.apiServiceLevel || ApiServiceLevelEnum.FREE,
+      true
+    );
+
+    return Math.min(systemLimit, tierLimit);
+  }
+
+  private async getMaxThrottleInMs(command: TierRestrictionsValidateCommand, organization: OrganizationEntity) {
+    const throttleOverride = await this.featureFlagsService.getFlag({
+      key: FeatureFlagsKeysEnum.MAX_THROTTLE_WINDOW_DURATION_IN_MS_NUMBER,
+      defaultValue: 0,
+      environment: { _id: command.environmentId },
+      organization,
+    });
+
+    if (throttleOverride > 0) {
+      return throttleOverride;
+    }
+
+    const systemLimit = await this.featureFlagsService.getFlag({
+      key: FeatureFlagsKeysEnum.MAX_DEFER_DURATION_IN_MS_NUMBER,
+      defaultValue: SYSTEM_LIMITS.DEFER_DURATION_MS,
+      environment: { _id: command.environmentId },
+      organization,
+    });
+
+    const isSpecialLimit = systemLimit !== SYSTEM_LIMITS.DEFER_DURATION_MS;
+    if (isSpecialLimit) {
+      return systemLimit;
+    }
+
+    const tierLimit = getFeatureForTierAsNumber(
+      FeatureNameEnum.PLATFORM_MAX_THROTTLE_WINDOW_TIME,
       organization.apiServiceLevel || ApiServiceLevelEnum.FREE,
       true
     );
@@ -180,12 +239,21 @@ function calculateMilliseconds(amount: number, unit: DigestUnitEnum): number {
 const isCronExpression = (cron: string) => {
   return !!cron;
 };
+
 const isRegularDeferAction = (command: TierRestrictionsValidateCommand) => {
+  if (command.type === 'dynamic') {
+    return false;
+  }
+
   if (command.deferDurationMs) {
     return true;
   }
 
   return !!command.amount && isNumber(command.amount) && !!command.unit && isValidDigestUnit(command.unit);
+};
+
+const isDynamicDelayAction = (command: TierRestrictionsValidateCommand) => {
+  return command.type === 'dynamic' && !!command.dynamicKey;
 };
 
 function buildIssue(
@@ -211,6 +279,25 @@ function msToDays(ms: number): number {
   return Math.floor(ms / (1000 * 60 * 60 * 24));
 }
 
-function isDigestOrDelay(stepType: StepTypeEnum): stepType is StepTypeEnum.DIGEST | StepTypeEnum.DELAY {
-  return [StepTypeEnum.DIGEST, StepTypeEnum.DELAY].includes(stepType);
+function isDigestDelayOrThrottle(
+  stepType: StepTypeEnum
+): stepType is StepTypeEnum.DIGEST | StepTypeEnum.DELAY | StepTypeEnum.THROTTLE {
+  return [StepTypeEnum.DIGEST, StepTypeEnum.DELAY, StepTypeEnum.THROTTLE].includes(stepType);
+}
+
+function isRegularThrottleAction(command: TierRestrictionsValidateCommand) {
+  return command.amount && command.unit && !isCronExpression(command.cron);
+}
+
+function calculateThrottleDuration(command: TierRestrictionsValidateCommand): number | null {
+  if (!command.amount || !command.unit) {
+    return null;
+  }
+
+  const digestUnit = castUnitToDigestUnitEnum(command.unit);
+  if (!digestUnit) {
+    return null;
+  }
+
+  return calculateMilliseconds(command.amount, digestUnit);
 }

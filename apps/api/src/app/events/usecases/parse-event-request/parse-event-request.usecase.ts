@@ -1,24 +1,27 @@
-import { BadRequestException, Injectable, UnprocessableEntityException } from '@nestjs/common';
+import { createHash, randomBytes } from 'node:crypto';
+import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
+import type { EventType, RequestTraceInput } from '@novu/application-generic';
 import {
   ExecuteBridgeRequest,
   ExecuteBridgeRequestCommand,
   ExecuteBridgeRequestDto,
   FeatureFlagsService,
+  InMemoryLRUCacheService,
+  InMemoryLRUCacheStore,
   Instrument,
   InstrumentUsecase,
   IWorkflowDataDto,
+  LogRepository,
+  mapEventTypeToTitle,
   PinoLogger,
   StorageHelperService,
+  TraceLogRepository,
   WorkflowQueueService,
 } from '@novu/application-generic';
 import {
-  CommunityOrganizationRepository,
-  EnvironmentEntity,
-  EnvironmentRepository,
   NotificationTemplateEntity,
   NotificationTemplateRepository,
-  OrganizationEntity,
   TenantEntity,
   TenantRepository,
   UserEntity,
@@ -28,34 +31,44 @@ import {
 import { DiscoverWorkflowOutput, GetActionEnum } from '@novu/framework/internal';
 import {
   FeatureFlagsKeysEnum,
-  ReservedVariablesMap,
-  TriggerContextTypeEnum,
+  ResourceOriginEnum,
   TriggerEventStatusEnum,
   TriggerRecipientsPayload,
-  WorkflowOriginEnum,
 } from '@novu/shared';
-import { addBreadcrumb } from '@sentry/node';
-import { randomBytes } from 'crypto';
-import { merge } from 'lodash';
-import { v4 as uuidv4 } from 'uuid';
-import Ajv, { ErrorObject } from 'ajv';
+import Ajv, { ValidateFunction } from 'ajv';
 import addFormats from 'ajv-formats';
+import { generateTransactionId } from '../../../shared/helpers/generate-transaction-id';
 import { PayloadValidationException } from '../../exceptions/payload-validation-exception';
 import { RecipientSchema, RecipientsSchema } from '../../utils/trigger-recipient-validation';
-import { VerifyPayload, VerifyPayloadCommand } from '../verify-payload';
 import {
   ParseEventRequestBroadcastCommand,
   ParseEventRequestCommand,
   ParseEventRequestMulticastCommand,
 } from './parse-event-request.command';
 
+const ajv = new Ajv({
+  allErrors: true,
+  useDefaults: true,
+  strict: false,
+});
+addFormats(ajv);
+
+function getSchemaHash(schema: object): string {
+  return createHash('sha256').update(JSON.stringify(schema)).digest('hex');
+}
+
+export type ParseEventRequestResult = {
+  acknowledged: boolean;
+  status: TriggerEventStatusEnum;
+  transactionId: string;
+  activityFeedLink?: string;
+  jobData?: IWorkflowDataDto;
+};
+
 @Injectable()
 export class ParseEventRequest {
   constructor(
     private notificationTemplateRepository: NotificationTemplateRepository,
-    private environmentRepository: EnvironmentRepository,
-    private communityOrganizationRepository: CommunityOrganizationRepository,
-    private verifyPayload: VerifyPayload,
     private storageHelperService: StorageHelperService,
     private workflowQueueService: WorkflowQueueService,
     private tenantRepository: TenantRepository,
@@ -63,142 +76,219 @@ export class ParseEventRequest {
     private executeBridgeRequest: ExecuteBridgeRequest,
     private logger: PinoLogger,
     private featureFlagService: FeatureFlagsService,
-    protected moduleRef: ModuleRef
+    private traceLogRepository: TraceLogRepository,
+    protected moduleRef: ModuleRef,
+    private inMemoryLRUCacheService: InMemoryLRUCacheService
   ) {
     this.logger.setContext(this.constructor.name);
   }
 
   @InstrumentUsecase()
-  public async execute(command: ParseEventRequestCommand) {
-    const transactionId = command.transactionId || uuidv4();
+  public async execute(command: ParseEventRequestCommand): Promise<ParseEventRequestResult> {
+    const transactionId = command.transactionId || generateTransactionId();
+    const requestId = command.requestId;
 
-    const [environment, organization] = await Promise.all([
-      this.environmentRepository.findOne({ _id: command.environmentId }),
-      this.communityOrganizationRepository.findOne({ _id: command.organizationId }),
-    ]);
+    try {
+      const statelessWorkflowAllowed = this.isStatelessWorkflowAllowed(command.bridgeUrl);
 
-    if (!organization) {
-      throw new BadRequestException('Organization not found');
-    }
+      if (statelessWorkflowAllowed) {
+        const discoveredWorkflow = await this.queryDiscoverWorkflow(command);
 
-    if (!environment) {
-      throw new BadRequestException('Environment not found');
-    }
+        if (!discoveredWorkflow) {
+          await this.createRequestTrace({
+            requestId,
+            command,
+            eventType: 'request_workflow_not_found',
+            transactionId,
+            status: 'error',
+            message: 'Bridge workflow not found',
+          });
+          throw new UnprocessableEntityException('workflow_not_found');
+        }
 
-    const statelessWorkflowAllowed = this.isStatelessWorkflowAllowed(command.bridgeUrl);
+        return await this.dispatchEventToWorkflowQueue({
+          requestId,
+          command,
+          transactionId,
+          discoveredWorkflow,
+        });
+      }
 
-    if (statelessWorkflowAllowed) {
-      const discoveredWorkflow = await this.queryDiscoverWorkflow(command);
+      const template: Pick<NotificationTemplateEntity, '_id' | 'active' | 'payloadSchema' | 'validatePayload'> | null =
+        command.workflow ||
+        (await this.getNotificationTemplateByTriggerIdentifier({
+          environmentId: command.environmentId,
+          triggerIdentifier: command.identifier,
+        }));
 
-      if (!discoveredWorkflow) {
+      if (!template) {
+        await this.createRequestTrace({
+          requestId,
+          command,
+          eventType: 'request_workflow_not_found',
+          transactionId,
+          status: 'error',
+          message: 'Notification template not found',
+        });
         throw new UnprocessableEntityException('workflow_not_found');
       }
 
-      return await this.dispatchEventToWorkflowQueue({
-        command,
-        transactionId,
-        discoveredWorkflow,
-        environment,
-        organization,
-      });
-    }
+      if (template.validatePayload && template.payloadSchema) {
+        try {
+          const validatedPayload = this.validateAndApplyPayloadDefaults(command.payload, template.payloadSchema);
+          // eslint-disable-next-line no-param-reassign
+          command.payload = validatedPayload;
+        } catch (error) {
+          if (error instanceof PayloadValidationException) {
+            await this.createRequestTrace({
+              requestId,
+              command,
+              eventType: 'request_payload_validation_failed',
+              transactionId,
+              status: 'error',
+              message: 'Payload validation failed',
+              rawData: { validationErrors: error.message, payload: command.payload },
+            });
+          }
+          throw error;
+        }
+      }
 
-    const template = await this.getNotificationTemplateByTriggerIdentifier({
-      environmentId: command.environmentId,
-      triggerIdentifier: command.identifier,
-    });
+      let tenant: Pick<TenantEntity, '_id'> | null = null;
+      if (command.tenant) {
+        tenant = await this.tenantRepository.findOne(
+          {
+            _environmentId: command.environmentId,
+            identifier: typeof command.tenant === 'string' ? command.tenant : command.tenant.identifier,
+          },
+          '_id',
+          { readPreference: 'secondaryPreferred' }
+        );
 
-    if (!template) {
-      throw new UnprocessableEntityException('workflow_not_found');
-    }
+        if (!tenant) {
+          return {
+            acknowledged: true,
+            status: TriggerEventStatusEnum.TENANT_MISSING,
+            transactionId,
+          };
+        }
+      }
 
-    const reservedVariablesTypes = this.getReservedVariablesTypes(template);
-    this.validateTriggerContext(command, reservedVariablesTypes);
+      let workflowOverride: Pick<WorkflowOverrideEntity, '_id' | 'active'> | null = null;
+      if (tenant) {
+        workflowOverride = await this.workflowOverrideRepository.findOne(
+          {
+            _environmentId: command.environmentId,
+            _workflowId: template._id,
+            _tenantId: tenant._id,
+          },
+          '_id active'
+        );
+      }
 
-    if (template.validatePayload && template.payloadSchema) {
-      const validatedPayload = this.validateAndApplyPayloadDefaults(command.payload, template.payloadSchema);
-      // eslint-disable-next-line no-param-reassign
-      command.payload = validatedPayload;
-    }
+      const inactiveWorkflow = !workflowOverride && !template.active;
+      const inactiveWorkflowOverride = workflowOverride && !workflowOverride.active;
 
-    let tenant: TenantEntity | null = null;
-    if (command.tenant) {
-      tenant = await this.tenantRepository.findOne({
-        _environmentId: command.environmentId,
-        identifier: typeof command.tenant === 'string' ? command.tenant : command.tenant.identifier,
-      });
-
-      if (!tenant) {
+      if (inactiveWorkflowOverride || inactiveWorkflow) {
         return {
           acknowledged: true,
-          status: TriggerEventStatusEnum.TENANT_MISSING,
+          status: TriggerEventStatusEnum.NOT_ACTIVE,
+          transactionId,
         };
       }
-    }
 
-    let workflowOverride: WorkflowOverrideEntity | null = null;
-    if (tenant) {
-      workflowOverride = await this.workflowOverrideRepository.findOne({
-        _environmentId: command.environmentId,
-        _organizationId: command.organizationId,
-        _workflowId: template._id,
-        _tenantId: tenant._id,
+      // Modify Attachment Key Name, Upload attachments to Storage Provider and Remove file from payload
+      if (command.payload && Array.isArray(command.payload.attachments)) {
+        this.modifyAttachments(command);
+        await this.storageHelperService.uploadAttachments(command.payload.attachments);
+        // eslint-disable-next-line no-param-reassign
+        command.payload.attachments = command.payload.attachments.map(({ file, ...attachment }) => attachment);
+      }
+
+      const result = await this.dispatchEventToWorkflowQueue({
+        requestId,
+        command,
+        transactionId,
       });
+
+      return result;
+    } catch (error) {
+      await this.createRequestTrace({
+        requestId,
+        command,
+        eventType: 'request_failed',
+        transactionId,
+        status: 'error',
+        message: `Request processing failed: ${error.message}`,
+        rawData: { error: error.message, stack: error.stack },
+      });
+
+      throw error;
     }
-
-    const inactiveWorkflow = !workflowOverride && !template.active;
-    const inactiveWorkflowOverride = workflowOverride && !workflowOverride.active;
-
-    if (inactiveWorkflowOverride || inactiveWorkflow) {
-      return {
-        acknowledged: true,
-        status: TriggerEventStatusEnum.NOT_ACTIVE,
-      };
-    }
-
-    if (!template.steps?.length) {
-      return {
-        acknowledged: true,
-        status: TriggerEventStatusEnum.NO_WORKFLOW_STEPS,
-      };
-    }
-
-    if (!template.steps?.some((step) => step.active)) {
-      return {
-        acknowledged: true,
-        status: TriggerEventStatusEnum.NO_WORKFLOW_ACTIVE_STEPS,
-      };
-    }
-
-    addBreadcrumb({
-      message: 'Sending trigger',
-      data: {
-        triggerIdentifier: command.identifier,
-      },
-    });
-
-    // Modify Attachment Key Name, Upload attachments to Storage Provider and Remove file from payload
-    if (command.payload && Array.isArray(command.payload.attachments)) {
-      this.modifyAttachments(command);
-      await this.storageHelperService.uploadAttachments(command.payload.attachments);
-      // eslint-disable-next-line no-param-reassign
-      command.payload.attachments = command.payload.attachments.map(({ file, ...attachment }) => attachment);
-    }
-
-    const defaultPayload = this.verifyPayload.execute(
-      VerifyPayloadCommand.create({
-        payload: command.payload,
-        template,
-      })
-    );
-    // eslint-disable-next-line no-param-reassign
-    command.payload = merge({}, defaultPayload, command.payload);
-
-    const result = await this.dispatchEventToWorkflowQueue({ command, transactionId, environment, organization });
-
-    return result;
   }
 
+  @Instrument()
+  private async createRequestTrace({
+    requestId,
+    command,
+    eventType,
+    transactionId,
+    status = 'success',
+    message,
+    rawData,
+  }: {
+    requestId: string | undefined;
+    command: ParseEventRequestCommand;
+    eventType: EventType;
+    transactionId: string;
+    status?: 'success' | 'error';
+    message?: string;
+    rawData?: unknown;
+  }): Promise<void> {
+    if (!requestId) {
+      this.logger.warn(
+        { command, eventType, transactionId, status, message, rawData },
+        'Request trace skipped, no request ID found'
+      );
+
+      return;
+    }
+
+    try {
+      const traceData: RequestTraceInput = {
+        created_at: LogRepository.formatDateTime64(new Date()),
+        organization_id: command.organizationId,
+        environment_id: command.environmentId,
+        user_id: command.userId,
+        subscriber_id: '',
+        external_subscriber_id: '',
+        event_type: eventType,
+        title: mapEventTypeToTitle(eventType),
+        message: message || '',
+        raw_data: rawData ? JSON.stringify(rawData) : '',
+        status,
+        entity_id: requestId,
+        workflow_run_identifier: command.identifier,
+        workflow_id: command.workflow?._id || '',
+        provider_id: '',
+      };
+
+      await this.traceLogRepository.createRequest([traceData]);
+    } catch (error) {
+      this.logger.error(
+        {
+          error,
+          eventType,
+          transactionId,
+          organizationId: command.organizationId,
+          environmentId: command.environmentId,
+        },
+        'Failed to create request trace'
+      );
+    }
+  }
+
+  @Instrument()
   private async queryDiscoverWorkflow(command: ParseEventRequestCommand): Promise<DiscoverWorkflowOutput | null> {
     if (!command.bridgeUrl) {
       return null;
@@ -209,33 +299,31 @@ export class ParseEventRequest {
         statelessBridgeUrl: command.bridgeUrl,
         environmentId: command.environmentId,
         action: GetActionEnum.DISCOVER,
-        workflowOrigin: WorkflowOriginEnum.EXTERNAL,
+        workflowOrigin: ResourceOriginEnum.EXTERNAL,
       })
     )) as ExecuteBridgeRequestDto<GetActionEnum.DISCOVER>;
 
     return discover?.workflows?.find((findWorkflow) => findWorkflow.workflowId === command.identifier) || null;
   }
 
+  @Instrument()
   private async dispatchEventToWorkflowQueue({
+    requestId,
     command,
     transactionId,
     discoveredWorkflow,
-    environment,
-    organization,
   }: {
+    requestId: string;
     command: ParseEventRequestMulticastCommand | ParseEventRequestBroadcastCommand;
     transactionId: string;
     discoveredWorkflow?: DiscoverWorkflowOutput | null;
-    environment?: EnvironmentEntity;
-    organization?: OrganizationEntity;
-  }) {
-    const commandArgs = {
-      ...command,
-    };
+  }): Promise<ParseEventRequestResult> {
+    // biome-ignore lint/correctness/noUnusedVariables: eliminate from queue
+    const { workflow, ...commandArgs } = command;
 
     const isDryRun = await this.featureFlagService.getFlag({
-      environment,
-      organization,
+      environment: { _id: command.environmentId },
+      organization: { _id: command.organizationId },
       user: { _id: command.userId } as UserEntity,
       key: FeatureFlagsKeysEnum.IS_SUBSCRIBER_ID_VALIDATION_DRY_RUN_ENABLED,
       defaultValue: true,
@@ -255,6 +343,16 @@ export class ParseEventRequest {
        * otherwise we should continue with the valid recipients.
        */
       if (!validRecipients && !isDryRun) {
+        await this.createRequestTrace({
+          requestId,
+          command,
+          eventType: 'request_invalid_recipients',
+          transactionId,
+          status: 'error',
+          message: 'All recipients are invalid',
+          rawData: { invalidRecipients },
+        });
+
         return {
           acknowledged: true,
           status: TriggerEventStatusEnum.INVALID_RECIPIENTS,
@@ -272,18 +370,24 @@ export class ParseEventRequest {
       actor: command.actor,
       transactionId,
       bridgeWorkflow: discoveredWorkflow ?? undefined,
+      requestId,
     };
 
-    await this.workflowQueueService.add({ name: transactionId, data: jobData, groupId: command.organizationId });
-    this.logger.info(
-      { ...command, transactionId, discoveredWorkflowId: discoveredWorkflow?.workflowId },
-      'Event dispatched to [Workflow] Queue'
-    );
+    if (!command.skipQueueInsertion) {
+      await this.workflowQueueService.add({ name: transactionId, data: jobData, groupId: command.organizationId });
+      this.logger.info(
+        { ...command, transactionId, discoveredWorkflowId: discoveredWorkflow?.workflowId },
+        'Event dispatched to [Workflow] Queue'
+      );
+    }
 
+    const activityFeedLink = `${process.env.DASHBOARD_URL || process.env.FRONT_BASE_URL}/env/${command.environmentId}/activity/requests?selectedLogId=${requestId}`;
     return {
       acknowledged: true,
       status: TriggerEventStatusEnum.PROCESSED,
       transactionId,
+      activityFeedLink,
+      jobData: command.skipQueueInsertion ? jobData : undefined,
     };
   }
 
@@ -299,41 +403,18 @@ export class ParseEventRequest {
   private async getNotificationTemplateByTriggerIdentifier(command: {
     triggerIdentifier: string;
     environmentId: string;
-  }) {
-    return await this.notificationTemplateRepository.findByTriggerIdentifier(
-      command.environmentId,
-      command.triggerIdentifier
+  }): Promise<Pick<NotificationTemplateEntity, '_id' | 'active' | 'payloadSchema' | 'validatePayload'> | null> {
+    return await this.notificationTemplateRepository.findOne(
+      {
+        _environmentId: command.environmentId,
+        'triggers.identifier': command.triggerIdentifier,
+      },
+      '_id active payloadSchema validatePayload',
+      { readPreference: 'secondaryPreferred' }
     );
   }
 
   @Instrument()
-  private validateTriggerContext(
-    command: ParseEventRequestCommand,
-    reservedVariablesTypes: TriggerContextTypeEnum[]
-  ): void {
-    const invalidKeys: string[] = [];
-
-    for (const reservedVariableType of reservedVariablesTypes) {
-      const payload = command[reservedVariableType];
-      if (!payload) {
-        invalidKeys.push(`${reservedVariableType} object`);
-        continue;
-      }
-      const reservedVariableFields = ReservedVariablesMap[reservedVariableType].map((variable) => variable.name);
-      for (const variableName of reservedVariableFields) {
-        const variableNameExists = payload[variableName];
-
-        if (!variableNameExists) {
-          invalidKeys.push(`${variableName} property of ${reservedVariableType}`);
-        }
-      }
-    }
-
-    if (invalidKeys.length) {
-      throw new BadRequestException(`Trigger is missing: ${invalidKeys.join(', ')}`);
-    }
-  }
-
   private modifyAttachments(command: ParseEventRequestCommand): void {
     // eslint-disable-next-line no-param-reassign
     command.payload.attachments = command.payload.attachments.map((attachment) => {
@@ -348,18 +429,13 @@ export class ParseEventRequest {
     });
   }
 
-  private getReservedVariablesTypes(template: NotificationTemplateEntity): TriggerContextTypeEnum[] {
-    const { reservedVariables } = template.triggers[0];
-
-    return reservedVariables?.map((reservedVariable) => reservedVariable.type) || [];
-  }
-
   /**
    * Validates a single Parent item.
    * @param item - The item to validate
    * @param invalidValues - Array to collect invalid values
    * @returns The valid item or null if invalid
    */
+  @Instrument()
   private validateItem(item: unknown, invalidValues: unknown[]) {
     const result = RecipientSchema.safeParse(item);
     if (result.success) {
@@ -386,6 +462,7 @@ export class ParseEventRequest {
    * @param input - The input to parse and validate. Can be a single recipient or an array of recipients.
    * @returns The object containing valid and invalid values.
    */
+  @Instrument()
   private parseRecipients(input: unknown) {
     const invalidValues: unknown[] = [];
 
@@ -408,16 +485,9 @@ export class ParseEventRequest {
     return { validRecipients: validItem, invalidRecipients: invalidValues };
   }
 
-  private validateAndApplyPayloadDefaults(payload: any, schema: any): any {
-    const ajv = new Ajv({
-      allErrors: true,
-      useDefaults: true,
-    });
-    addFormats(ajv);
-
-    const validate = ajv.compile(schema);
-
-    // Create a deep copy of the payload to avoid mutating the original
+  @Instrument()
+  private validateAndApplyPayloadDefaults(payload: Record<string, unknown>, schema: object): Record<string, unknown> {
+    const validate = this.getCompiledValidator(schema);
     const payloadWithDefaults = JSON.parse(JSON.stringify(payload));
     const valid = validate(payloadWithDefaults);
 
@@ -426,5 +496,17 @@ export class ParseEventRequest {
     }
 
     return payloadWithDefaults;
+  }
+
+  private getCompiledValidator(schema: object): ValidateFunction {
+    const hash = getSchemaHash(schema);
+    let validate = this.inMemoryLRUCacheService.getIfCached(InMemoryLRUCacheStore.VALIDATOR, hash) as ValidateFunction;
+
+    if (!validate) {
+      validate = ajv.compile(schema);
+      this.inMemoryLRUCacheService.set(InMemoryLRUCacheStore.VALIDATOR, hash, validate);
+    }
+
+    return validate;
   }
 }

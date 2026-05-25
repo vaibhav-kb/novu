@@ -1,26 +1,27 @@
-import { zodResolver } from '@hookform/resolvers/zod';
-import { StepContentIssueEnum, type StepUpdateDto } from '@novu/shared';
+import { standardSchemaResolver } from '@hookform/resolvers/standard-schema';
+import { ContentIssueEnum, EnvironmentTypeEnum, type StepUpdateDto } from '@novu/shared';
 import { useEffect, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import {
+  defaultRuleProcessorJsonLogic,
   formatQuery,
   generateID,
   RQBJsonLogic,
   RuleGroupType,
   RuleType,
-  defaultRuleProcessorJsonLogic,
 } from 'react-querybuilder';
 import { parseJsonLogic } from 'react-querybuilder/parseJsonLogic';
 import { z } from 'zod';
 
 import { ConditionsEditor } from '@/components/conditions-editor/conditions-editor';
+import { isRelativeDateOperator } from '@/components/conditions-editor/field-type-operators';
 import { Form, FormField } from '@/components/primitives/form/form';
 import { updateStepInWorkflow } from '@/components/workflow-editor/step-utils';
 import { useWorkflow } from '@/components/workflow-editor/workflow-provider';
+import { useEnvironment } from '@/context/environment/hooks';
 import { useDataRef } from '@/hooks/use-data-ref';
 import { useFormAutosave } from '@/hooks/use-form-autosave';
 import { useParseVariables } from '@/hooks/use-parse-variables';
-import { type EnhancedLiquidVariable } from '@/utils/parseStepVariables';
 import { useTelemetry } from '@/hooks/use-telemetry';
 import {
   countConditions,
@@ -28,16 +29,21 @@ import {
   getUniqueOperators,
   parseJsonLogicOptions,
 } from '@/utils/conditions';
+import { type EnhancedLiquidVariable } from '@/utils/parseStepVariables';
 import { TelemetryEvent } from '@/utils/telemetry';
-import { isRelativeDateOperator } from '@/components/conditions-editor/field-type-operators';
 import { EditStepConditionsLayout } from './edit-step-conditions-layout';
 
 const PAYLOAD_FIELD_PREFIX = 'payload.';
 const SUBSCRIBER_DATA_FIELD_PREFIX = 'subscriber.data.';
+const CONTEXT_FIELD_PREFIX = 'context.';
 
-// Custom rule processor to handle relative date operators
+const CONTAINS_ANY_OPERATORS = ['containsAny', 'doesNotContainAny'] as const;
+
+function isContainsAnyOperator(operator: string): boolean {
+  return (CONTAINS_ANY_OPERATORS as readonly string[]).includes(operator);
+}
+
 const customRuleProcessor = (rule: RuleType, options: any) => {
-  // Handle relative date operators
   if (isRelativeDateOperator(rule.operator)) {
     try {
       const parsedValue = JSON.parse(rule.value as string);
@@ -47,32 +53,51 @@ const customRuleProcessor = (rule: RuleType, options: any) => {
         (typeof parsedValue.amount === 'number' || typeof parsedValue.amount === 'string') &&
         parsedValue.unit
       ) {
-        const result = {
+        return {
           [rule.operator]: [{ var: rule.field }, parsedValue],
         };
-
-        return result;
       }
     } catch (error) {
       console.warn('Failed to parse relative date value:', rule.value, error);
     }
   }
 
-  // Fall back to the default rule processor for all other operators
+  if (isContainsAnyOperator(rule.operator)) {
+    const trimmedValue = (rule.value as string).trim();
+    const variableMatch = trimmedValue.match(/^\{\{(.+?)\}\}$/);
+
+    if (variableMatch) {
+      return {
+        [rule.operator]: [{ var: rule.field }, { var: variableMatch[1].trim() }],
+      };
+    }
+
+    const values = trimmedValue
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean);
+
+    return {
+      [rule.operator]: [{ var: rule.field }, values],
+    };
+  }
+
   return defaultRuleProcessorJsonLogic(rule, options);
 };
 
-const getRuleSchema = (fields: Array<{ value: string }>): z.ZodType<RuleType | RuleGroupType> => {
+const getRuleSchema = (
+  fields: Array<{ value: string }>,
+  isAllowedVariableFn: (variable: { name: string }) => boolean
+): z.ZodType<RuleType | RuleGroupType> => {
   const allowedFields = fields.map((field) => field.value);
 
   return z.union([
     z
-      .object({
+      .looseObject({
         field: z.string().min(1),
         operator: z.string(),
         value: z.string().nullable(),
       })
-      .passthrough()
       .superRefine(({ field, operator, value }, ctx) => {
         if (operator === 'between' || operator === 'notBetween') {
           const values = value?.split(',').filter((val) => val.trim() !== '');
@@ -120,17 +145,24 @@ const getRuleSchema = (fields: Array<{ value: string }>): z.ZodType<RuleType | R
         const isPayloadField = field.startsWith(PAYLOAD_FIELD_PREFIX) && field.length > PAYLOAD_FIELD_PREFIX.length;
         const isSubscriberDataField =
           field.startsWith(SUBSCRIBER_DATA_FIELD_PREFIX) && field.length > SUBSCRIBER_DATA_FIELD_PREFIX.length;
+        const isContextField = field.startsWith(CONTEXT_FIELD_PREFIX) && field.length > CONTEXT_FIELD_PREFIX.length;
 
-        if (!allowedFields.includes(field) && !isPayloadField && !isSubscriberDataField) {
+        // Context fields use additionalProperties schema pattern instead of explicit properties,
+        // so they don't appear in allowedFields and need validation with isAllowedVariable
+        // Example: 'context.<anything>.id' or 'context.<anything>.data' are valid, but 'context.<anything>.invalid' is not
+        const isValidContextField = isContextField ? isAllowedVariableFn({ name: field }) : false;
+
+        const shouldAddError =
+          !allowedFields.includes(field) && !isPayloadField && !isSubscriberDataField && !isValidContextField;
+
+        if (shouldAddError) {
           ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Value is not valid', path: ['field'] });
         }
       }),
-    z
-      .object({
-        combinator: z.string(),
-        rules: z.array(z.lazy(() => getRuleSchema(fields))),
-      })
-      .passthrough(),
+    z.looseObject({
+      combinator: z.string(),
+      rules: z.array(z.lazy(() => getRuleSchema(fields, isAllowedVariableFn))),
+    }),
   ]);
 };
 
@@ -138,12 +170,15 @@ type FormQuery = {
   query: RuleGroupType;
 };
 
-const getConditionsSchema = (fields: Array<{ value: string }>): z.ZodType<FormQuery> => {
+const getConditionsSchema = (
+  fields: Array<{ value: string }>,
+  isAllowedVariableFn: (variable: { name: string }) => boolean
+) => {
   return z.object({
     query: z
       .object({
         combinator: z.string(),
-        rules: z.array(getRuleSchema(fields)),
+        rules: z.array(getRuleSchema(fields, isAllowedVariableFn)),
       })
       .passthrough(),
   });
@@ -152,6 +187,8 @@ const getConditionsSchema = (fields: Array<{ value: string }>): z.ZodType<FormQu
 export const EditStepConditionsForm = () => {
   const track = useTelemetry();
   const { workflow, step, update, digestStepBeforeCurrent } = useWorkflow();
+  const { currentEnvironment, readOnly } = useEnvironment();
+  const isReadOnly = readOnly || currentEnvironment?.type !== EnvironmentTypeEnum.DEV;
   const hasConditions = !!step?.controls.values.skip;
   const query = useMemo(
     () =>
@@ -177,7 +214,7 @@ export const EditStepConditionsForm = () => {
     // Users should use specific properties within these namespaces instead
     const isTopLevelNamespace = namespaces.some((ns) => ns.name === variable.name);
 
-    if (isTopLevelNamespace) {
+    if (isTopLevelNamespace && variable.name !== 'subscriber.data') {
       return false;
     }
 
@@ -201,24 +238,28 @@ export const EditStepConditionsForm = () => {
     format: enhancedVariable.format,
   }));
 
-  const form = useForm<FormQuery>({
+  const form = useForm({
     mode: 'onSubmit',
-    resolver: zodResolver(getConditionsSchema(fields)),
+    resolver: standardSchemaResolver(getConditionsSchema(fields, isAllowedVariable)),
     defaultValues: {
-      query,
+      query: query as unknown as z.infer<ReturnType<typeof getConditionsSchema>>['query'],
     },
   });
 
   const { onBlur, saveForm } = useFormAutosave({
     previousData: {
-      query,
+      query: query as unknown as z.infer<ReturnType<typeof getConditionsSchema>>['query'],
     },
     form,
     shouldClientValidate: true,
     save: (data) => {
+      if (isReadOnly) return;
       if (!step || !workflow) return;
 
-      const skip = formatQuery(data.query, { format: 'jsonlogic', ruleProcessor: customRuleProcessor });
+      const skip = formatQuery(data.query as unknown as RuleGroupType, {
+        format: 'jsonlogic',
+        ruleProcessor: customRuleProcessor,
+      });
       const updateStepData: Partial<StepUpdateDto> = {
         controlValues: { ...step.controls.values, skip },
       };
@@ -259,7 +300,6 @@ export const EditStepConditionsForm = () => {
   const saveFormRef = useDataRef(saveForm);
   useEffect(() => {
     return () => {
-      // eslint-disable-next-line react-hooks/exhaustive-deps
       saveFormRef.current();
     };
   }, [saveFormRef]);
@@ -273,7 +313,7 @@ export const EditStepConditionsForm = () => {
       stepConditionIssues.forEach((issue) => {
         const queryPath = 'query.rules.' + issue.variableName?.split('.').join('.rules.');
 
-        if (issue.issueType === StepContentIssueEnum.MISSING_VALUE) {
+        if (issue.issueType === ContentIssueEnum.MISSING_VALUE) {
           form.setError(`${queryPath}.value` as keyof typeof form.formState.errors, {
             message: issue.message,
           });
@@ -287,33 +327,32 @@ export const EditStepConditionsForm = () => {
   }, [form, step]);
 
   return (
-    <>
-      <Form {...form}>
-        <EditStepConditionsLayout
-          stepName={step?.name}
-          onBlur={onBlur}
-          onSubmit={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-        >
-          <FormField
-            control={form.control}
-            name="query"
-            render={({ field }) => (
-              <ConditionsEditor
-                saveForm={saveForm}
-                query={field.value}
-                onQueryChange={field.onChange}
-                fields={fields}
-                variables={variables}
-                isAllowedVariable={isAllowedVariable}
-                enhancedVariables={filteredEnhancedVariables}
-              />
-            )}
-          />
-        </EditStepConditionsLayout>
-      </Form>
-    </>
+    <Form {...form}>
+      <EditStepConditionsLayout
+        stepName={step?.name}
+        onBlur={onBlur}
+        onSubmit={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+      >
+        <FormField
+          control={form.control}
+          name="query"
+          render={({ field }) => (
+            <ConditionsEditor
+              saveForm={saveForm}
+              query={field.value as RuleGroupType}
+              onQueryChange={field.onChange}
+              fields={fields}
+              variables={variables}
+              isAllowedVariable={isAllowedVariable}
+              enhancedVariables={filteredEnhancedVariables}
+              disabled={isReadOnly}
+            />
+          )}
+        />
+      </EditStepConditionsLayout>
+    </Form>
   );
 };

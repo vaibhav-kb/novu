@@ -10,15 +10,43 @@ import { ClientSDK, RequestOptions } from "../lib/sdks.js";
 import * as components from "../models/components/index.js";
 import * as operations from "../models/operations/index.js";
 import { unwrapAsync } from "../types/fp.js";
+import { Activity } from "./activity.js";
+import { ChannelConnections } from "./channelconnections.js";
+import { ChannelEndpoints } from "./channelendpoints.js";
+import { Contexts } from "./contexts.js";
+import { Domains } from "./domains.js";
 import { Environments } from "./environments.js";
+import { EnvironmentVariables } from "./environmentvariables.js";
 import { Integrations } from "./integrations.js";
+import { Layouts } from "./layouts.js";
 import { Messages } from "./messages.js";
 import { Notifications } from "./notifications.js";
 import { Subscribers } from "./subscribers.js";
 import { Topics } from "./topics.js";
+import { Translations } from "./translations.js";
 import { Workflows } from "./workflows.js";
 
 export class Novu extends ClientSDK {
+  private _contexts?: Contexts;
+  get contexts(): Contexts {
+    return (this._contexts ??= new Contexts(this._options));
+  }
+
+  private _environments?: Environments;
+  get environments(): Environments {
+    return (this._environments ??= new Environments(this._options));
+  }
+
+  private _activity?: Activity;
+  get activity(): Activity {
+    return (this._activity ??= new Activity(this._options));
+  }
+
+  private _layouts?: Layouts;
+  get layouts(): Layouts {
+    return (this._layouts ??= new Layouts(this._options));
+  }
+
   private _subscribers?: Subscribers;
   get subscribers(): Subscribers {
     return (this._subscribers ??= new Subscribers(this._options));
@@ -29,14 +57,36 @@ export class Novu extends ClientSDK {
     return (this._topics ??= new Topics(this._options));
   }
 
+  private _translations?: Translations;
+  get translations(): Translations {
+    return (this._translations ??= new Translations(this._options));
+  }
+
   private _workflows?: Workflows;
   get workflows(): Workflows {
     return (this._workflows ??= new Workflows(this._options));
   }
 
-  private _environments?: Environments;
-  get environments(): Environments {
-    return (this._environments ??= new Environments(this._options));
+  private _channelConnections?: ChannelConnections;
+  get channelConnections(): ChannelConnections {
+    return (this._channelConnections ??= new ChannelConnections(this._options));
+  }
+
+  private _channelEndpoints?: ChannelEndpoints;
+  get channelEndpoints(): ChannelEndpoints {
+    return (this._channelEndpoints ??= new ChannelEndpoints(this._options));
+  }
+
+  private _domains?: Domains;
+  get domains(): Domains {
+    return (this._domains ??= new Domains(this._options));
+  }
+
+  private _environmentVariables?: EnvironmentVariables;
+  get environmentVariables(): EnvironmentVariables {
+    return (this._environmentVariables ??= new EnvironmentVariables(
+      this._options,
+    ));
   }
 
   private _integrations?: Integrations;
@@ -59,9 +109,8 @@ export class Novu extends ClientSDK {
    *
    * @remarks
    *
-   *     Trigger event is the main (and only) way to send notifications to subscribers.
-   *     The trigger identifier is used to match the particular workflow associated with it.
-   *     Additional information can be passed according the body interface below.
+   *     Trigger event is the main (and only) way to send notifications to subscribers. The trigger identifier is used to match the particular workflow associated with it. Maximum number of recipients can be 100. Additional information can be passed according the body interface below.
+   *     To prevent duplicate triggers, you can optionally pass a **transactionId** in the request body. If the same **transactionId** is used again, the trigger will be ignored. The retention period depends on your billing tier.
    */
   async trigger(
     triggerEventRequestDto: components.TriggerEventRequestDto,

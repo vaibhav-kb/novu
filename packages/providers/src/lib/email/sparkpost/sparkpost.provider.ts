@@ -1,11 +1,11 @@
 import { EmailProviderIdEnum } from '@novu/shared';
 import {
   ChannelTypeEnum,
-  ISendMessageSuccessResponse,
+  CheckIntegrationResponseEnum,
+  ICheckIntegrationResponse,
   IEmailOptions,
   IEmailProvider,
-  ICheckIntegrationResponse,
-  CheckIntegrationResponseEnum,
+  ISendMessageSuccessResponse,
 } from '@novu/stateless';
 import axios, { AxiosError } from 'axios';
 import { randomUUID } from 'crypto';
@@ -40,7 +40,7 @@ export class SparkPostEmailProvider extends BaseProvider implements IEmailProvid
   }
 
   async sendMessage(
-    { from, to, subject, text, html, attachments }: IEmailOptions,
+    { from, to, subject, text, html, attachments, headers }: IEmailOptions,
     bridgeProviderData: WithPassthrough<Record<string, unknown>> = {}
   ): Promise<ISendMessageSuccessResponse> {
     const recipients: { address: string }[] = to.map((recipient) => {
@@ -65,6 +65,7 @@ export class SparkPostEmailProvider extends BaseProvider implements IEmailProvid
         text,
         html,
         attachments: files,
+        ...(headers && Object.keys(headers).length > 0 && { headers }),
       },
     });
 

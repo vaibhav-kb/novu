@@ -1,10 +1,11 @@
+import { StandardNovuOptions } from '@novu/js';
+import { buildSubscriber } from '@novu/js/internal';
 import React, { useMemo } from 'react';
-import { Subscriber, StandardNovuOptions } from '@novu/js';
-import { DefaultProps, DefaultInboxProps, WithChildrenProps } from '../utils/types';
-import { Mounter } from './Mounter';
 import { useNovuUI } from '../context/NovuUIContext';
 import { useRenderer } from '../context/RendererContext';
 import { InternalNovuProvider, useNovu, useUnsafeNovu } from '../hooks/NovuProvider';
+import { DefaultInboxProps, DefaultProps, WithChildrenProps } from '../utils/types';
+import { Mounter } from './Mounter';
 import { NovuUI } from './NovuUI';
 import { withRenderer } from './Renderer';
 
@@ -14,8 +15,11 @@ const DefaultInbox = (props: DefaultInboxProps) => {
   const {
     open,
     renderNotification,
+    renderAvatar,
     renderSubject,
     renderBody,
+    renderDefaultActions,
+    renderCustomActions,
     renderBell,
     onNotificationClick,
     onPrimaryActionClick,
@@ -51,10 +55,17 @@ const DefaultInbox = (props: DefaultInboxProps) => {
         name: 'Inbox',
         props: {
           open,
+          renderAvatar: renderAvatar ? (el, notification) => mountElement(el, renderAvatar(notification)) : undefined,
           renderSubject: renderSubject
             ? (el, notification) => mountElement(el, renderSubject(notification))
             : undefined,
           renderBody: renderBody ? (el, notification) => mountElement(el, renderBody(notification)) : undefined,
+          renderDefaultActions: renderDefaultActions
+            ? (el, notification) => mountElement(el, renderDefaultActions(notification))
+            : undefined,
+          renderCustomActions: renderCustomActions
+            ? (el, notification) => mountElement(el, renderCustomActions(notification))
+            : undefined,
           renderBell: renderBell ? (el, unreadCount) => mountElement(el, renderBell(unreadCount)) : undefined,
           onNotificationClick,
           onPrimaryActionClick,
@@ -68,8 +79,11 @@ const DefaultInbox = (props: DefaultInboxProps) => {
     [
       open,
       renderNotification,
+      renderAvatar,
       renderSubject,
       renderBody,
+      renderDefaultActions,
+      renderCustomActions,
       renderBell,
       onNotificationClick,
       onPrimaryActionClick,
@@ -82,7 +96,10 @@ const DefaultInbox = (props: DefaultInboxProps) => {
 
 export const Inbox = React.memo((props: InboxProps) => {
   const { subscriberId, ...propsWithoutSubscriberId } = props;
-  const subscriber = buildSubscriber(props.subscriber, props.subscriberId);
+  const subscriber = useMemo(
+    () => buildSubscriber({ subscriberId: props.subscriberId, subscriber: props.subscriber }),
+    [props.subscriberId, props.subscriber]
+  );
   const applicationIdentifier = props.applicationIdentifier ? props.applicationIdentifier : ''; // for keyless we provide an empty string, the api will generate a identifier
   const novu = useUnsafeNovu();
 
@@ -95,13 +112,17 @@ export const Inbox = React.memo((props: InboxProps) => {
   const providerProps = {
     applicationIdentifier,
     subscriberHash: props.subscriberHash,
+    contextHash: props.contextHash,
     backendUrl: props.backendUrl,
     socketUrl: props.socketUrl,
+    socketOptions: props.socketOptions,
     subscriber,
+    defaultSchedule: props.defaultSchedule,
+    context: props.context,
   } satisfies StandardNovuOptions;
 
   return (
-    <InternalNovuProvider {...providerProps} userAgentType="components">
+    <InternalNovuProvider {...providerProps}>
       <InboxChild {...propsWithoutSubscriberId} applicationIdentifier={applicationIdentifier} subscriber={subscriber} />
     </InternalNovuProvider>
   );
@@ -115,13 +136,18 @@ const InboxChild = withRenderer(
       tabs,
       preferencesFilter,
       preferenceGroups,
+      preferencesSort,
       routerPush,
       applicationIdentifier = '', // for keyless we provide an empty string, the api will generate a identifier
       subscriberId,
       subscriberHash,
+      contextHash,
       backendUrl,
       socketUrl,
+      socketOptions,
       subscriber,
+      defaultSchedule,
+      context,
     } = props;
     const novu = useNovu();
 
@@ -132,13 +158,18 @@ const InboxChild = withRenderer(
         tabs,
         preferencesFilter,
         preferenceGroups,
+        preferencesSort,
         routerPush,
         options: {
           applicationIdentifier,
           subscriberHash,
+          contextHash,
           backendUrl,
           socketUrl,
-          subscriber: buildSubscriber(subscriber, subscriberId),
+          socketOptions,
+          subscriber: buildSubscriber({ subscriberId, subscriber }),
+          defaultSchedule,
+          context,
         },
       };
     }, [
@@ -147,12 +178,16 @@ const InboxChild = withRenderer(
       tabs,
       preferencesFilter,
       preferenceGroups,
+      preferencesSort,
       applicationIdentifier,
       subscriberId,
       subscriberHash,
+      contextHash,
       backendUrl,
       socketUrl,
+      socketOptions,
       subscriber,
+      context,
     ]);
 
     if (isWithChildrenProps(props)) {
@@ -166,8 +201,11 @@ const InboxChild = withRenderer(
     const {
       open,
       renderNotification,
+      renderAvatar,
       renderSubject,
       renderBody,
+      renderDefaultActions,
+      renderCustomActions,
       renderBell,
       onNotificationClick,
       onPrimaryActionClick,
@@ -181,8 +219,11 @@ const InboxChild = withRenderer(
         <DefaultInbox
           open={open}
           renderNotification={renderNotification}
+          renderAvatar={renderAvatar}
           renderSubject={renderSubject}
           renderBody={renderBody}
+          renderDefaultActions={renderDefaultActions}
+          renderCustomActions={renderCustomActions}
           renderBell={renderBell}
           onNotificationClick={onNotificationClick}
           onPrimaryActionClick={onPrimaryActionClick}
@@ -195,21 +236,8 @@ const InboxChild = withRenderer(
   })
 );
 
+InboxChild.displayName = 'InboxChild';
+
 function isWithChildrenProps(props: InboxProps): props is WithChildrenProps {
   return 'children' in props;
-}
-
-function buildSubscriber(subscriber?: string | Subscriber | undefined, subscriberId?: string): Subscriber {
-  // subscriber object
-  if (subscriber) {
-    return typeof subscriber === 'string' ? { subscriberId: subscriber } : subscriber;
-  }
-
-  // subscriberId
-  if (subscriberId) {
-    return { subscriberId };
-  }
-
-  // missing - keyless subscriber, the api will generate a subscriberId
-  return { subscriberId: '' };
 }

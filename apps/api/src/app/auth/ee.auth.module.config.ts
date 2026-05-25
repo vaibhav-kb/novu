@@ -1,10 +1,14 @@
-/* eslint-disable global-require */
-import { PlatformException, cacheService } from '@novu/application-generic';
 import { MiddlewareConsumer, ModuleMetadata } from '@nestjs/common';
+import {
+  cacheService,
+  featureFlagsService,
+  InMemoryLRUCacheService,
+  PlatformException,
+} from '@novu/application-generic';
 import { RootEnvironmentGuard } from './framework/root-environment-guard.service';
+import { AuthService } from './services/auth.service';
 import { ApiKeyStrategy } from './services/passport/apikey.strategy';
 import { JwtSubscriberStrategy } from './services/passport/subscriber-jwt.strategy';
-import { AuthService } from './services/auth.service';
 
 export function getEEModuleConfig(): ModuleMetadata {
   const eeAuthPackage = require('@novu/ee-auth');
@@ -24,6 +28,8 @@ export function getEEModuleConfig(): ModuleMetadata {
       JwtSubscriberStrategy,
       AuthService,
       cacheService,
+      featureFlagsService,
+      InMemoryLRUCacheService,
       RootEnvironmentGuard,
     ],
     exports: [...eeAuthModule.exports, RootEnvironmentGuard, AuthService],

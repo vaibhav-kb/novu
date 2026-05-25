@@ -1,13 +1,12 @@
-import { FilterQuery } from 'mongoose';
-import { SoftDeleteModel } from 'mongoose-delete';
 import { NOVU_PROVIDERS } from '@novu/shared';
-
-import { IntegrationEntity, IntegrationDBModel, ProviderCount } from './integration.entity';
-import { Integration } from './integration.schema';
-
-import { BaseRepository } from '../base-repository';
+import { ClientSession, FilterQuery } from 'mongoose';
+import { SoftDeleteModel } from 'mongoose-delete';
 import { DalException } from '../../shared';
 import type { EnforceEnvOrOrgIds, IDeleteResult } from '../../types';
+
+import { BaseRepository } from '../base-repository';
+import { IntegrationDBModel, IntegrationEntity, ProviderCount } from './integration.entity';
+import { Integration } from './integration.schema';
 
 export type IntegrationQuery = FilterQuery<IntegrationDBModel> & EnforceEnvOrOrgIds;
 
@@ -21,8 +20,7 @@ export class IntegrationRepository extends BaseRepository<IntegrationDBModel, In
   async find(
     query: IntegrationQuery,
     select = '',
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    options: { limit?: number; sort?: any; skip?: number } = {}
+    options: { limit?: number; sort?: any; skip?: number; session?: ClientSession | null } = {}
   ): Promise<IntegrationEntity[]> {
     return super.find(query, select, options);
   }
@@ -66,12 +64,15 @@ export class IntegrationRepository extends BaseRepository<IntegrationDBModel, In
     });
   }
 
-  async create(data: IntegrationQuery): Promise<IntegrationEntity> {
-    return await super.create(data);
+  async create(data: IntegrationQuery, options: { session?: ClientSession | null } = {}): Promise<IntegrationEntity> {
+    return await super.create(data, options);
   }
 
-  async delete(query: IntegrationQuery) {
-    return await this.integration.delete({ _id: query._id, _organizationId: query._organizationId });
+  async delete(query: IntegrationQuery, options: { session?: ClientSession | null } = {}) {
+    const q = this.integration.delete({ _id: query._id, _organizationId: query._organizationId });
+    if (options.session) q.session(options.session);
+
+    return await q;
   }
 
   async deleteMany(query: IntegrationQuery): Promise<IDeleteResult> {

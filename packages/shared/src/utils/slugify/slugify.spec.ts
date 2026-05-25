@@ -1,8 +1,7 @@
 // @ts-nocheck
 /* cspell:disable */
-/* eslint-disable guard-for-in */
 
-import { it, describe, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { slugify } from './slugify';
 
 describe('slugify', () => {
@@ -528,6 +527,16 @@ describe('slugify', () => {
     for (const ch in charMap) {
       expect(slugify(`foo ${ch} bar baz`), `foo-${charMap[ch]}-bar-baz`);
     }
+  });
+
+  it('returns empty string for CJK-only input', () => {
+    expect(slugify('テストメール')).toBe('');
+    expect(slugify('你好世界')).toBe('');
+    expect(slugify('알림')).toBe('');
+  });
+
+  it('preserves ASCII parts in mixed-script input', () => {
+    expect(slugify('Test テスト')).toBe('test');
   });
 
   it('normalizes the string', () => {

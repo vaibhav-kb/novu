@@ -48,6 +48,12 @@ module.exports = {
         ring: defaultColor('nv-color-ring'),
         stripes: defaultColor('nv-color-stripes'),
         border: defaultColor('nv-color-neutral-alpha-100'),
+        'severity-high': defaultColor('nv-color-severity-high'),
+        'severity-high-alpha': generateColorShades('nv-color-severity-high-alpha'),
+        'severity-medium': defaultColor('nv-color-severity-medium'),
+        'severity-medium-alpha': generateColorShades('nv-color-severity-medium-alpha'),
+        'severity-low': defaultColor('nv-color-severity-low'),
+        'severity-low-alpha': generateColorShades('nv-color-severity-low-alpha'),
       },
       borderRadius: {
         none: 'var(--nv-radius-none)',
@@ -82,11 +88,17 @@ module.exports = {
       },
       animation: {
         stripes: 'stripes 1s linear infinite paused',
+        shimmer: 'shimmer 1.5s ease-in-out infinite',
       },
       keyframes: {
         stripes: {
           '0%': { transform: 'translateX(0)' },
           '100%': { transform: 'translateX(calc(var(--stripes-size) * -1))' },
+        },
+        shimmer: {
+          '0%': { opacity: '1' },
+          '50%': { opacity: '0.6' },
+          '100%': { opacity: '1' },
         },
       },
     },

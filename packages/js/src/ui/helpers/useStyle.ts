@@ -1,7 +1,7 @@
 import { createMemo, createSignal, onMount } from 'solid-js';
 import { appearanceKeys } from '../config';
 import { useAppearance } from '../context';
-import type { AppearanceKey, Elements, IconKey } from '../types';
+import type { AllAppearanceKey, AllElements, AllIconKey } from '../types';
 import { cn, publicFacingTwMerge } from './utils';
 
 export const useStyle = () => {
@@ -14,21 +14,27 @@ export const useStyle = () => {
 
   const styleFuncMemo = createMemo(
     () =>
-      (
-        appearanceKey: AppearanceKey,
-        className?: string,
-        {
-          iconKey,
-        }: {
-          iconKey?: IconKey;
-        } = {}
-      ) => {
-        const appearanceKeyParts = appearanceKey.split('__');
-        let finalAppearanceKeys: (keyof Elements)[] = [];
+      ({
+        key,
+        className,
+        iconKey,
+        context,
+      }: {
+        key: AllAppearanceKey;
+        className?: string;
+        iconKey?: AllIconKey;
+        context?: any;
+      }) => {
+        if (!key) {
+          return cn(className);
+        }
+
+        const appearanceKeyParts = key.split('__');
+        let finalAppearanceKeys: (keyof AllElements)[] = [];
         for (let i = 0; i < appearanceKeyParts.length; i += 1) {
           const accumulated = appearanceKeyParts.slice(i).join('__');
-          if (appearanceKeys.includes(accumulated as keyof Elements)) {
-            finalAppearanceKeys.push(accumulated as keyof Elements);
+          if (appearanceKeys.includes(accumulated as keyof AllElements)) {
+            finalAppearanceKeys.push(accumulated as keyof AllElements);
           }
         }
 
@@ -41,7 +47,7 @@ export const useStyle = () => {
         // Remove duplicates
         finalAppearanceKeys = Array.from(
           new Set([...finalAppearanceKeys, ...appearanceKeysInClasses])
-        ) as (keyof Elements)[];
+        ) as (keyof AllElements)[];
 
         // Sort appearance keys by the number of `__` occurrences
         finalAppearanceKeys.sort((a, b) => {
@@ -59,8 +65,11 @@ export const useStyle = () => {
         let appearanceClassnames: string[] = [];
         const reversedFinalAppearanceKeys = finalAppearanceKeys.reverse();
         for (let i = 0; i < reversedFinalAppearanceKeys.length; i += 1) {
-          if (typeof appearance.elements()[reversedFinalAppearanceKeys[i]] === 'string') {
-            appearanceClassnames.push(appearance.elements()[reversedFinalAppearanceKeys[i]] as string);
+          const elementStyles = appearance.elements()[reversedFinalAppearanceKeys[i]];
+          if (typeof elementStyles === 'string') {
+            appearanceClassnames.push(elementStyles);
+          } else if (typeof elementStyles === 'function') {
+            appearanceClassnames.push(elementStyles(context));
           }
         }
 

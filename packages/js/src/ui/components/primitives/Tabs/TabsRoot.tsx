@@ -10,7 +10,7 @@ import {
   useContext,
 } from 'solid-js';
 import { cn, useStyle } from '../../../helpers';
-import type { AppearanceKey } from '../../../types';
+import type { AllAppearanceKey } from '../../../types';
 import { useKeyboardNavigation } from './useKeyboardNavigation';
 
 type TabsRootProps = Omit<JSX.IntrinsicElements['div'], 'onChange'> &
@@ -18,7 +18,7 @@ type TabsRootProps = Omit<JSX.IntrinsicElements['div'], 'onChange'> &
     defaultValue?: string;
     value?: string;
     class?: string;
-    appearanceKey?: AppearanceKey;
+    appearanceKey?: AllAppearanceKey;
     onChange?: (value: string) => void;
   };
 
@@ -65,7 +65,10 @@ export const TabsRoot = (props: TabsRootProps) => {
     <TabsContext.Provider value={{ activeTab, setActiveTab, visibleTabs, setVisibleTabs }}>
       <div
         ref={setTabsContainer}
-        class={style(local.appearanceKey || 'tabsRoot', cn(tabsRootVariants(), local.class))}
+        class={style({
+          key: local.appearanceKey || 'tabsRoot',
+          className: cn(tabsRootVariants(), local.class),
+        })}
         {...rest}
       >
         {local.children}

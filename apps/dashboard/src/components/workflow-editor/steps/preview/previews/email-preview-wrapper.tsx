@@ -1,24 +1,25 @@
-import { useState, useMemo } from 'react';
+import { ChannelTypeEnum, ResourceOriginEnum } from '@novu/shared';
 import { AnimatePresence, motion } from 'motion/react';
+import { useMemo, useState } from 'react';
 import { RiMacLine, RiSmartphoneFill } from 'react-icons/ri';
-import { ChannelTypeEnum } from '@novu/shared';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/primitives/tabs';
 import { Skeleton } from '@/components/primitives/skeleton';
-import { cn } from '@/utils/ui';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives/tabs';
 import {
   EmailPreviewBody,
   EmailPreviewBodyMobile,
   EmailPreviewContentMobile,
   EmailPreviewHeader,
   EmailPreviewSubject,
-  EmailPreviewSubjectMobile,
 } from '@/components/workflow-editor/steps/email/email-preview';
 import { EmailTabsSection } from '@/components/workflow-editor/steps/email/email-tabs-section';
+import { cn } from '@/utils/ui';
 
 type EmailCorePreviewProps = {
   previewData: any;
   isPreviewPending: boolean;
-  controlValues?: Record<string, unknown>;
+  isCustomHtmlEditor?: boolean;
+  resourceOrigin: ResourceOriginEnum;
+  isStepResolver?: boolean;
 };
 
 const fadeVariants = {
@@ -26,11 +27,14 @@ const fadeVariants = {
   visible: { opacity: 1 },
 };
 
-export function EmailCorePreview({ previewData, isPreviewPending, controlValues }: EmailCorePreviewProps) {
+export function EmailCorePreview({
+  previewData,
+  isPreviewPending,
+  isCustomHtmlEditor,
+  resourceOrigin,
+  isStepResolver,
+}: EmailCorePreviewProps) {
   const [activeTab, setActiveTab] = useState('desktop');
-
-  // Check if using custom HTML editor
-  const isCustomHtmlEditor = controlValues?.editorType === 'html';
 
   // Memoize the preview content extraction to avoid recalculating on every render
   const emailPreviewContent = useMemo(() => {
@@ -41,6 +45,7 @@ export function EmailCorePreview({ previewData, isPreviewPending, controlValues 
     return {
       subject: previewData.result.preview?.subject || '',
       body: previewData.result.preview?.body || '',
+      from: previewData.result.preview?.from,
     };
   }, [previewData?.result]);
 
@@ -74,7 +79,7 @@ export function EmailCorePreview({ previewData, isPreviewPending, controlValues 
       <div className="">
         <div className="bg-bg-white overflow-auto rounded-lg border border-neutral-200">
           <div className="flex w-full items-center justify-between px-3 pb-0 pt-3">
-            <EmailPreviewHeader />
+            <EmailPreviewHeader previewFrom={emailPreviewContent?.from} />
             <div>
               <TabsList>
                 <TabsTrigger value="mobile">
@@ -103,10 +108,17 @@ export function EmailCorePreview({ previewData, isPreviewPending, controlValues 
                   {emailPreviewContent ? (
                     <>
                       <TabsContent value="mobile">
-                        <div className="w-full bg-neutral-100">
+                        <div className="border-b px-2">
+                          <EmailPreviewSubject subject={emailPreviewContent.subject} />
+                        </div>
+                        <div className={cn(isCustomHtmlEditor ? '' : 'w-full bg-neutral-50 py-8')}>
                           <EmailPreviewContentMobile className="mx-auto">
-                            <EmailPreviewSubjectMobile subject={emailPreviewContent.subject} />
-                            <EmailPreviewBodyMobile body={emailPreviewContent.body} />
+                            <EmailPreviewBodyMobile
+                              className="bg-background"
+                              body={emailPreviewContent.body}
+                              resourceOrigin={resourceOrigin}
+                              isStepResolver={isStepResolver}
+                            />
                           </EmailPreviewContentMobile>
                         </div>
                       </TabsContent>
@@ -117,6 +129,8 @@ export function EmailCorePreview({ previewData, isPreviewPending, controlValues 
                         <div className={cn(isCustomHtmlEditor ? '' : 'bg-neutral-50 px-16 py-8')}>
                           <EmailPreviewBody
                             body={emailPreviewContent.body}
+                            resourceOrigin={resourceOrigin}
+                            isStepResolver={isStepResolver}
                             className={isCustomHtmlEditor ? 'bg-background max-w-auto max-w-none rounded-lg' : ''}
                           />
                         </div>

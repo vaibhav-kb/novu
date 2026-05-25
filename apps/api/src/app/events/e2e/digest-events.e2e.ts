@@ -1,5 +1,4 @@
-import axios from 'axios';
-import { expect } from 'chai';
+import { Novu } from '@novu/api';
 import {
   JobRepository,
   JobStatusEnum,
@@ -8,20 +7,19 @@ import {
   SubscriberEntity,
 } from '@novu/dal';
 import { DigestTypeEnum, DigestUnitEnum, IDigestRegularMetadata, StepTypeEnum } from '@novu/shared';
-import { JobsService, SubscribersService, UserSession } from '@novu/testing';
-import { Novu } from '@novu/api';
+import { SubscribersService, UserSession } from '@novu/testing';
+import { expect } from 'chai';
 import { initNovuClassSdk } from '../../shared/helpers/e2e/sdk/e2e-sdk.helper';
+import { pollForJobStatusChange } from './utils/poll-for-job-status-change.util';
 
-const axiosInstance = axios.create();
-
-describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #novu-v2', function () {
+describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #novu-v2', () => {
   let session: UserSession;
   let template: NotificationTemplateEntity;
   let subscriber: SubscriberEntity;
   let subscriberService: SubscribersService;
   const jobRepository = new JobRepository();
   const messageRepository = new MessageRepository();
-  const jobsService = new JobsService();
+
   let novuClient: Novu;
   beforeEach(async () => {
     session = new UserSession();
@@ -43,7 +41,7 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     );
   };
 
-  it('should digest events within time interval', async function () {
+  it('should digest events within time interval', async () => {
     template = await session.createTemplate({
       steps: [
         {
@@ -110,7 +108,7 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     expect(job && job?.digest?.events?.length).to.equal(2);
   });
 
-  it('should not have digest prop when not running a digest', async function () {
+  it('should not have digest prop when not running a digest', async () => {
     template = await session.createTemplate({
       steps: [
         {
@@ -136,7 +134,7 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     expect(message && message[0].content).to.not.include('HAS_DIGEST_PROP');
   });
 
-  it('should add a digest prop to template compilation', async function () {
+  it('should add a digest prop to template compilation', async () => {
     template = await session.createTemplate({
       steps: [
         {
@@ -190,7 +188,7 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     expect(message && message?.content).to.include('HAS_DIGEST_PROP');
   });
 
-  it('should digest based on digestKey within time interval', async function () {
+  it('should digest based on digestKey within time interval', async () => {
     const id = MessageRepository.createObjectId();
     template = await session.createTemplate({
       steps: [
@@ -233,17 +231,21 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     await session.waitForSubscriberQueueCompletion();
     await session.waitForStandardQueueCompletion();
 
-    const jobs = await jobRepository.find({
-      _environmentId: session.environment._id,
-      _templateId: template._id,
-      type: StepTypeEnum.DIGEST,
+    const jobs = await pollForJobStatusChange({
+      jobRepository,
+      query: {
+        _environmentId: session.environment._id,
+        _templateId: template._id,
+        type: StepTypeEnum.DIGEST,
+      },
+      findMultiple: true,
     });
 
     expect(jobs && jobs.length).to.eql(3);
 
-    const delayedJobs = jobs.filter((elem) => elem.status === JobStatusEnum.DELAYED);
+    const delayedJobs = jobs?.filter((elem) => elem.status === JobStatusEnum.DELAYED);
     expect(delayedJobs && delayedJobs.length).to.eql(2);
-    const mergedJobs = jobs.filter((elem) => elem.status !== JobStatusEnum.DELAYED);
+    const mergedJobs = jobs?.filter((elem) => elem.status !== JobStatusEnum.DELAYED);
     expect(mergedJobs && mergedJobs.length).to.eql(1);
 
     await session.waitForDbJobCompletion({ templateId: template?._id });
@@ -262,7 +264,7 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     expect(jobsWithEvents && jobsWithEvents.length).to.equal(2);
   });
 
-  it('should digest based on same digestKey within time interval', async function () {
+  it('should digest based on same digestKey within time interval', async () => {
     const firstDigestKey = 'digest-key-one';
     const secondDigestKey = 'digest-key-two';
     template = await session.createTemplate({
@@ -333,7 +335,7 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     expect(messages && messages.length).to.equal(2);
   });
 
-  it('should digest delayed events', async function () {
+  it('should digest delayed events', async () => {
     template = await session.createTemplate({
       steps: [
         {
@@ -373,7 +375,7 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     expect(jobs && jobs.length).to.equal(0);
   });
 
-  it.skip('should digest with backoff strategy', async function () {
+  it.skip('should digest with backoff strategy', async () => {
     template = await session.createTemplate({
       steps: [
         {
@@ -446,7 +448,7 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     expect(digestEventLength0).to.be.ok;
   });
 
-  it('should create multiple digest based on different digestKeys', async function () {
+  it('should create multiple digest based on different digestKeys', async () => {
     const postId = MessageRepository.createObjectId();
     const postId2 = MessageRepository.createObjectId();
 
@@ -530,7 +532,7 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     expect(jobCount).to.equal(15);
   });
 
-  it('should create multiple digests based on different nested digestKeys', async function () {
+  it('should create multiple digests based on different nested digestKeys', async () => {
     const postId = MessageRepository.createObjectId();
     const postId2 = MessageRepository.createObjectId();
 
@@ -618,7 +620,7 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     expect(jobCount).to.equal(15);
   });
 
-  it('should create multiple digest based on different digestKeys with backoff', async function () {
+  it('should create multiple digest based on different digestKeys with backoff', async () => {
     const postId = MessageRepository.createObjectId();
     const postId2 = MessageRepository.createObjectId();
 
@@ -708,7 +710,7 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     expect(jobCount).to.equal(18);
   });
 
-  it('should create multiple digests based on different nested digestKeys with backoff', async function () {
+  it('should create multiple digests based on different nested digestKeys with backoff', async () => {
     const postId = MessageRepository.createObjectId();
     const postId2 = MessageRepository.createObjectId();
 
@@ -800,7 +802,7 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     expect(jobCount).to.equal(18);
   });
 
-  it('should add a digest prop to chat template compilation', async function () {
+  it('should add a digest prop to chat template compilation', async () => {
     template = await session.createTemplate({
       steps: [
         {
@@ -857,7 +859,7 @@ describe('Trigger event - Digest triggered events - /v1/events/trigger (POST) #n
     expect(message && message?.content).to.include('Total events in digest:2');
   });
 
-  it('should add a digest prop to push template compilation', async function () {
+  it('should add a digest prop to push template compilation', async () => {
     template = await session.createTemplate({
       steps: [
         {

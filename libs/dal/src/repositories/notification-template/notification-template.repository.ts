@@ -1,7 +1,6 @@
-import { FilterQuery } from 'mongoose';
+import { DirectionEnum, ResourceOriginEnum, ResourceTypeEnum, SeverityLevelEnum } from '@novu/shared';
+import { ClientSession, FilterQuery } from 'mongoose';
 import { SoftDeleteModel } from 'mongoose-delete';
-
-import { DirectionEnum } from '@novu/shared';
 import { DalException } from '../../shared';
 import type { EnforceEnvOrOrgIds } from '../../types/enforce';
 import { BaseRepository } from '../base-repository';
@@ -24,50 +23,196 @@ export class NotificationTemplateRepository extends BaseRepository<
     this.notificationTemplate = NotificationTemplate;
   }
 
-  async findByTriggerIdentifier(environmentId: string, identifier: string) {
+  async findPublishable(environmentId: string, organizationId: string): Promise<NotificationTemplateEntity[]> {
+    const items = await this.MongooseModel.find({
+      _environmentId: environmentId,
+      _organizationId: organizationId,
+      type: ResourceTypeEnum.BRIDGE,
+      origin: ResourceOriginEnum.NOVU_CLOUD,
+    })
+      .select({
+        _id: 1,
+        name: 1,
+        'triggers.identifier': 1,
+        updatedAt: 1,
+        _updatedBy: 1,
+        _environmentId: 1,
+        isTranslationEnabled: 1,
+      })
+      .populate('updatedBy', '_id firstName lastName externalId')
+      .populate('lastPublishedBy', '_id firstName lastName externalId');
+
+    return this.mapEntities(items);
+  }
+
+  async findForBulkPreferences(
+    environmentId: string,
+    ids: string[],
+    identifiers: string[],
+    session?: ClientSession | null
+  ) {
+    const requestQuery: NotificationTemplateQuery = {
+      _environmentId: environmentId,
+      $or: [{ _id: { $in: ids } }, { 'triggers.identifier': { $in: identifiers } }],
+    };
+
+    const query = this.MongooseModel.find(requestQuery, undefined, { session }).populate('steps.template', { type: 1 });
+
+    const items = await query;
+
+    return this.mapEntities(items);
+  }
+
+  async findNameAndTriggersByIds(
+    organizationId: string,
+    workflowIds: string[]
+  ): Promise<Pick<NotificationTemplateEntity, 'name' | 'triggers' | '_environmentId'>[]> {
+    return this.find(
+      {
+        _id: { $in: workflowIds },
+        _organizationId: organizationId,
+      },
+      { _id: 0, name: 1, triggers: 1, _environmentId: 1 }
+    );
+  }
+
+  async findByTriggerIdentifierBulk(
+    environmentId: string,
+    identifiers: string[],
+    options?: { session?: ClientSession | null }
+  ): Promise<NotificationTemplateEntity[]>;
+
+  async findByTriggerIdentifierBulk<K extends keyof NotificationTemplateEntity>(
+    environmentId: string,
+    identifiers: string[],
+    options: { session?: ClientSession | null; select: K[] }
+  ): Promise<Pick<NotificationTemplateEntity, K>[]>;
+
+  async findByTriggerIdentifierBulk<K extends keyof NotificationTemplateEntity>(
+    environmentId: string,
+    identifiers: string[],
+    options: { session?: ClientSession | null; select?: K[] } = {}
+  ): Promise<NotificationTemplateEntity[] | Pick<NotificationTemplateEntity, K>[]> {
+    const { session, select } = options;
+
+    const requestQuery: NotificationTemplateQuery = {
+      _environmentId: environmentId,
+      'triggers.identifier': { $in: identifiers },
+    };
+
+    const projection = select ? Object.fromEntries(select.map((field) => [field, 1])) : undefined;
+
+    const baseQuery = this.MongooseModel.find(requestQuery, projection, { session });
+    const query = !select || select.includes('steps' as K) ? baseQuery.populate('steps.template') : baseQuery;
+
+    const items = await query;
+
+    return this.mapEntities(items) as NotificationTemplateEntity[] | Pick<NotificationTemplateEntity, K>[];
+  }
+
+  async findByTriggerIdentifier(
+    environmentId: string,
+    identifier: string,
+    session?: ClientSession | null,
+    includeUpdatedBy: boolean = true
+  ) {
     const requestQuery: NotificationTemplateQuery = {
       _environmentId: environmentId,
       'triggers.identifier': identifier,
     };
 
-    const item = await this.MongooseModel.findOne(requestQuery).populate('steps.template');
+    const query = this.MongooseModel.findOne(requestQuery, undefined, {
+      session,
+      readPreference: 'secondaryPreferred',
+    }).populate('steps.template');
+
+    if (includeUpdatedBy) {
+      query.populate('updatedBy');
+    }
+
+    const item = await query;
 
     return this.mapEntity(item);
   }
 
-  async findAllByTriggerIdentifier(environmentId: string, identifier: string): Promise<NotificationTemplateEntity[]> {
+  async findAllByTriggerIdentifier(
+    environmentId: string,
+    identifier: string,
+    session?: ClientSession | null
+  ): Promise<NotificationTemplateEntity[]> {
     const requestQuery: NotificationTemplateQuery = {
       _environmentId: environmentId,
       'triggers.identifier': identifier,
     };
 
-    const query = await this._model.find(requestQuery, { _id: 1, 'triggers.identifier': 1 });
+    const query = await this._model.find(requestQuery, { _id: 1, 'triggers.identifier': 1 }, { session });
 
     return this.mapEntities(query);
   }
 
-  async findById(id: string, environmentId: string) {
-    const item = await this.MongooseModel.findOne({
-      _id: id,
-      _environmentId: environmentId,
-    })
+  async findById(id: string, environmentId: string, session?: ClientSession | null, includeUpdatedBy: boolean = true) {
+    const query = this.MongooseModel.findOne(
+      {
+        _id: id,
+        _environmentId: environmentId,
+      },
+      undefined,
+      { session }
+    )
       .populate('steps.template')
       .populate('steps.variants.template');
+
+    if (includeUpdatedBy) {
+      query.populate('updatedBy');
+    }
+
+    const item = await query;
 
     return this.mapEntity(item);
   }
 
-  async findByTriggerIdentifierAndUpdate(environmentId: string, triggerIdentifier: string, lastTriggeredAt: Date) {
+  async updateLastTriggeredAt(
+    environmentId: string,
+    triggerIdentifier: string,
+    lastTriggeredAt: Date,
+    previousLastTriggeredAt: Date | null
+  ) {
+    const updateResult = await this.MongooseModel.updateOne(
+      {
+        _environmentId: environmentId,
+        'triggers.identifier': triggerIdentifier,
+        $or: [{ lastTriggeredAt: null }, { lastTriggeredAt: previousLastTriggeredAt }],
+      },
+      {
+        $set: {
+          lastTriggeredAt,
+        },
+      },
+      {
+        timestamps: false,
+        writeConcern: { w: 1 },
+      }
+    );
+
+    return updateResult.modifiedCount > 0;
+  }
+
+  async updatePublishFields(workflowId: string, environmentId: string, userId: string, session?: ClientSession | null) {
     const requestQuery: NotificationTemplateQuery = {
+      _id: workflowId,
       _environmentId: environmentId,
-      'triggers.identifier': triggerIdentifier,
     };
 
-    const item = await this.MongooseModel.findOneAndUpdate(requestQuery, {
-      $set: {
-        lastTriggeredAt,
+    const item = await this.MongooseModel.findOneAndUpdate(
+      requestQuery,
+      {
+        $set: {
+          lastPublishedAt: new Date(),
+          _lastPublishedBy: userId,
+        },
       },
-    }).populate('steps.template');
+      { session, new: true }
+    );
 
     return this.mapEntity(item);
   }
@@ -234,7 +379,7 @@ export class NotificationTemplateRepository extends BaseRepository<
       ...searchQuery,
     });
 
-    const items = await this.MongooseModel.find({
+    const mongoQuery = this.MongooseModel.find({
       _environmentId: environmentId,
       _organizationId: organizationId,
       ...searchQuery,
@@ -245,7 +390,10 @@ export class NotificationTemplateRepository extends BaseRepository<
       .populate({ path: 'notificationGroup' })
       .populate('steps.template', { type: 1 })
       .select('-steps.variants')
-      .lean();
+      .populate('updatedBy')
+      .populate('lastPublishedBy', '_id firstName lastName');
+
+    const items = await mongoQuery.lean();
 
     return { totalCount: totalItemsCount, data: this.mapEntities(items) };
   }
@@ -255,17 +403,32 @@ export class NotificationTemplateRepository extends BaseRepository<
     environmentId,
     tags,
     critical,
+    severity,
+    select,
+    limit,
   }: {
     organizationId: string;
     environmentId: string;
-    tags?: string[];
-    critical?: boolean;
+    tags?: string[] | undefined;
+    critical?: boolean | undefined;
+    severity?: SeverityLevelEnum[] | undefined;
+    select?: string;
+    limit?: number;
   }) {
     const requestQuery: NotificationTemplateQuery = {
       _environmentId: environmentId,
       _organizationId: organizationId,
       active: true,
     };
+
+    const severityCondition: Array<FilterQuery<NotificationTemplateDBModel>> = [];
+    if (severity && severity?.length > 0) {
+      if (severity.includes(SeverityLevelEnum.NONE)) {
+        severityCondition.push({ severity: { $exists: false } }, { severity: { $in: severity } });
+      } else {
+        requestQuery.severity = { $in: severity };
+      }
+    }
 
     if (tags && tags?.length > 0) {
       requestQuery.tags = { $in: tags };
@@ -275,11 +438,25 @@ export class NotificationTemplateRepository extends BaseRepository<
       requestQuery.critical = { $eq: critical };
     }
 
-    const items = await this.MongooseModel.find(requestQuery)
+    // combine all $or conditions properly
+    const orConditions: Array<FilterQuery<NotificationTemplateDBModel>> = [];
+    if (severityCondition.length > 0) {
+      orConditions.push({ $or: severityCondition });
+    }
+    if (orConditions.length > 0) {
+      requestQuery.$and = [...(requestQuery.$and ?? []), ...orConditions];
+    }
+
+    const query = this.MongooseModel.find(requestQuery)
       .populate('steps.template', { type: 1 })
-      .populate('notificationGroup')
-      .limit(500) // protective limit
+      .limit(limit || 200)
       .read('secondaryPreferred');
+
+    if (select) {
+      query.select(select);
+    }
+
+    const items = await query;
 
     return this.mapEntities(items);
   }
@@ -302,7 +479,7 @@ export class NotificationTemplateRepository extends BaseRepository<
     return process.env.BLUEPRINT_CREATOR;
   }
 
-  async estimatedDocumentCount(): Promise<any> {
+  async estimatedDocumentCount(): Promise<number> {
     return this.notificationTemplate.estimatedDocumentCount();
   }
 
@@ -315,6 +492,7 @@ export class NotificationTemplateRepository extends BaseRepository<
             $sum: {
               $cond: {
                 if: { $isArray: '$steps' },
+                // biome-ignore lint/suspicious/noThenProperty: MongoDB aggregation syntax requires 'then' property
                 then: { $size: '$steps' },
                 else: 0,
               },
@@ -328,6 +506,16 @@ export class NotificationTemplateRepository extends BaseRepository<
     } else {
       return 0;
     }
+  }
+
+  async findWithTemplates(query: NotificationTemplateQuery): Promise<NotificationTemplateEntity[]> {
+    const items = await this.MongooseModel.find(query)
+      .populate('steps.template')
+      .populate('steps.variants.template')
+      .populate('updatedBy')
+      .lean();
+
+    return this.mapEntities(items);
   }
 }
 

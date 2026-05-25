@@ -1,12 +1,12 @@
 import { createMemo, JSX, splitProps } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
-import { usePopover } from '.';
 import { useStyle } from '../../../helpers';
 import { mergeRefs } from '../../../helpers/mergeRefs';
-import type { AppearanceKey } from '../../../types';
+import type { AllAppearanceKey } from '../../../types';
+import { usePopover } from '.';
 
 type PopoverTriggerProps = JSX.IntrinsicElements['button'] & {
-  appearanceKey?: AppearanceKey;
+  appearanceKey?: AllAppearanceKey;
   asChild?: (props: any) => JSX.Element;
 };
 export const PopoverTrigger = (props: PopoverTriggerProps) => {
@@ -29,7 +29,12 @@ export const PopoverTrigger = (props: PopoverTriggerProps) => {
   }
 
   return (
-    <button ref={ref()} onClick={handleClick} class={style(local.appearanceKey || 'dropdownTrigger')} {...rest}>
+    <button
+      ref={ref()}
+      onClick={handleClick}
+      class={style({ key: local.appearanceKey || 'dropdownTrigger' })}
+      {...rest}
+    >
       {props.children}
     </button>
   );

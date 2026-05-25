@@ -1,5 +1,14 @@
 import { DalService } from '@novu/dal';
-import { AnalyticsService, CacheInMemoryProviderService, CacheService, FeatureFlagsService } from '../services';
+import { PinoLogger } from 'nestjs-pino';
+import {
+  AnalyticsService,
+  CacheInMemoryProviderService,
+  CacheService,
+  ClickHouseBatchService,
+  ClickHouseService,
+  FeatureFlagsService,
+  QueueBaseService,
+} from '../services';
 
 export const featureFlagsService = {
   provide: FeatureFlagsService,
@@ -49,4 +58,22 @@ export const analyticsService = {
 
     return service;
   },
+};
+
+export const clickHouseService = {
+  provide: ClickHouseService,
+  useFactory: async () => {
+    const service = new ClickHouseService();
+    await service.init();
+
+    return service;
+  },
+};
+
+export const clickHouseBatchService = {
+  provide: ClickHouseBatchService,
+  useFactory: async (clickhouseService: ClickHouseService, logger: PinoLogger, queueServices?: QueueBaseService[]) => {
+    return new ClickHouseBatchService(clickhouseService, logger, queueServices || []);
+  },
+  inject: [ClickHouseService, PinoLogger, { token: 'BULLMQ_LIST', optional: true }],
 };

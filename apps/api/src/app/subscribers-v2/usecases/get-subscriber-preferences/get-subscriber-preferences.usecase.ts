@@ -1,8 +1,13 @@
-import { Injectable } from '@nestjs/common';
-import { ISubscriberPreferenceResponse, ShortIsPrefixEnum } from '@novu/shared';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { buildSlug, InMemoryLRUCacheService, InMemoryLRUCacheStore, Instrument } from '@novu/application-generic';
+import {
+  NotificationTemplateEntity,
+  NotificationTemplateRepository,
+  SubscriberEntity,
+  SubscriberRepository,
+} from '@novu/dal';
+import { ISubscriberPreferenceResponse, ShortIsPrefixEnum, WorkflowCriticalityEnum } from '@novu/shared';
 import { plainToInstance } from 'class-transformer';
-import { GetSubscriberPreferencesCommand } from './get-subscriber-preferences.command';
-import { buildSlug } from '../../../shared/helpers/build-slug';
 import {
   GetSubscriberGlobalPreference,
   GetSubscriberGlobalPreferenceCommand,
@@ -11,20 +16,41 @@ import {
   GetSubscriberPreference,
   GetSubscriberPreferenceCommand,
 } from '../../../subscribers/usecases/get-subscriber-preference';
-import { SubscriberGlobalPreferenceDto } from '../../dtos/subscriber-global-preference.dto';
 import { GetSubscriberPreferencesDto } from '../../dtos/get-subscriber-preferences.dto';
+import { SubscriberGlobalPreferenceDto } from '../../dtos/subscriber-global-preference.dto';
 import { SubscriberWorkflowPreferenceDto } from '../../dtos/subscriber-workflow-preference.dto';
+import { GetSubscriberPreferencesCommand } from './get-subscriber-preferences.command';
 
 @Injectable()
 export class GetSubscriberPreferences {
   constructor(
     private getSubscriberGlobalPreference: GetSubscriberGlobalPreference,
-    private getSubscriberPreference: GetSubscriberPreference
+    private getSubscriberPreference: GetSubscriberPreference,
+    private subscriberRepository: SubscriberRepository,
+    private notificationTemplateRepository: NotificationTemplateRepository,
+    private inMemoryLRUCacheService: InMemoryLRUCacheService
   ) {}
 
   async execute(command: GetSubscriberPreferencesCommand): Promise<GetSubscriberPreferencesDto> {
-    const globalPreference = await this.fetchGlobalPreference(command);
-    const workflowPreferences = await this.fetchWorkflowPreferences(command);
+    const subscriber = await this.subscriberRepository.findBySubscriberId(
+      command.environmentId,
+      command.subscriberId,
+      true,
+      '_id'
+    );
+
+    if (!subscriber) {
+      throw new NotFoundException(`Subscriber with id: ${command.subscriberId} not found`);
+    }
+
+    const workflowList = await this.getActiveWorkflows({
+      organizationId: command.organizationId,
+      environmentId: command.environmentId,
+      critical: command.criticality === WorkflowCriticalityEnum.CRITICAL ? true : undefined,
+    });
+
+    const globalPreference = await this.fetchGlobalPreference(command, subscriber, workflowList);
+    const workflowPreferences = await this.fetchWorkflowPreferences(command, subscriber, workflowList);
 
     return plainToInstance(GetSubscriberPreferencesDto, {
       global: globalPreference,
@@ -33,7 +59,9 @@ export class GetSubscriberPreferences {
   }
 
   private async fetchGlobalPreference(
-    command: GetSubscriberPreferencesCommand
+    command: GetSubscriberPreferencesCommand,
+    subscriber: SubscriberEntity,
+    workflowList: NotificationTemplateEntity[]
   ): Promise<SubscriberGlobalPreferenceDto> {
     const { preference } = await this.getSubscriberGlobalPreference.execute(
       GetSubscriberGlobalPreferenceCommand.create({
@@ -41,22 +69,32 @@ export class GetSubscriberPreferences {
         environmentId: command.environmentId,
         subscriberId: command.subscriberId,
         includeInactiveChannels: false,
+        contextKeys: command.contextKeys,
+        subscriber,
+        workflowList,
       })
     );
 
     return {
-      enabled: preference.enabled,
-      channels: preference.channels,
+      ...preference,
     };
   }
 
-  private async fetchWorkflowPreferences(command: GetSubscriberPreferencesCommand) {
+  private async fetchWorkflowPreferences(
+    command: GetSubscriberPreferencesCommand,
+    subscriber: SubscriberEntity,
+    workflowList: NotificationTemplateEntity[]
+  ) {
     const subscriberWorkflowPreferences = await this.getSubscriberPreference.execute(
       GetSubscriberPreferenceCommand.create({
         environmentId: command.environmentId,
         subscriberId: command.subscriberId,
         organizationId: command.organizationId,
         includeInactiveChannels: false,
+        criticality: command.criticality ?? WorkflowCriticalityEnum.NON_CRITICAL,
+        contextKeys: command.contextKeys,
+        subscriber,
+        workflowList,
       })
     );
 
@@ -72,6 +110,7 @@ export class GetSubscriberPreferences {
       enabled: preference.enabled,
       channels: preference.channels,
       overrides: preference.overrides,
+      updatedAt: preference.updatedAt,
       workflow: {
         slug: buildSlug(template.name, ShortIsPrefixEnum.WORKFLOW, template._id),
         identifier: template.triggers[0].identifier,
@@ -79,5 +118,45 @@ export class GetSubscriberPreferences {
         updatedAt: template.updatedAt,
       },
     };
+  }
+
+  @Instrument()
+  private async getActiveWorkflows({
+    organizationId,
+    environmentId,
+    critical,
+  }: {
+    organizationId: string;
+    environmentId: string;
+    critical?: boolean;
+  }): Promise<NotificationTemplateEntity[]> {
+    const cacheKey = `${organizationId}:${environmentId}`;
+    const cacheVariant = this.buildCacheVariant(critical);
+
+    return this.inMemoryLRUCacheService.get(
+      InMemoryLRUCacheStore.ACTIVE_WORKFLOWS,
+      cacheKey,
+      async () =>
+        await this.notificationTemplateRepository.filterActive({
+          organizationId,
+          environmentId,
+          tags: undefined,
+          severity: undefined,
+          critical,
+        }),
+      {
+        organizationId,
+        environmentId,
+        cacheVariant,
+      }
+    );
+  }
+
+  private buildCacheVariant(critical?: boolean): string {
+    const filters = {
+      ...(critical !== undefined && { critical }),
+    };
+
+    return Object.keys(filters).length > 0 ? JSON.stringify(filters) : 'default';
   }
 }

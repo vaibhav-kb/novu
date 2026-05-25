@@ -1,8 +1,8 @@
 import { CommunityOrganizationRepository, EnvironmentRepository } from '@novu/dal';
-import { UserSession } from '@novu/testing';
-import jwt from 'jsonwebtoken';
-import { expect } from 'chai';
 import { MemberRoleEnum, UserSessionData } from '@novu/shared';
+import { UserSession } from '@novu/testing';
+import { expect } from 'chai';
+import jwt from 'jsonwebtoken';
 
 describe('User registration - /auth/register (POST) #novu-v0-os', async () => {
   let session: UserSession;
@@ -26,7 +26,7 @@ describe('User registration - /auth/register (POST) #novu-v0-os', async () => {
   });
 
   it('should throw error if user signup is disabled', async () => {
-    process.env.DISABLE_USER_REGISTRATION = 'true';
+    (process.env as Record<string, string>).DISABLE_USER_REGISTRATION = 'true';
 
     const { body } = await session.testAgent.post('/v1/auth/register').send({
       email: 'Testy.test@gmail.com',
@@ -38,7 +38,7 @@ describe('User registration - /auth/register (POST) #novu-v0-os', async () => {
     expect(body.statusCode).to.equal(400);
     expect(JSON.stringify(body)).to.include('Account creation is disabled');
 
-    process.env.DISABLE_USER_REGISTRATION = 'false';
+    (process.env as Record<string, string>).DISABLE_USER_REGISTRATION = 'false';
   });
 
   it('should create a new user successfully', async () => {
@@ -101,7 +101,6 @@ describe('User registration - /auth/register (POST) #novu-v0-os', async () => {
     });
 
     expect(body.message[0]).to.contain(
-      // eslint-disable-next-line max-len
       'The password must contain minimum 8 and maximum 64 characters, at least one uppercase letter, one lowercase letter, one number and one special character #?!@$%^&*()-'
     );
   });

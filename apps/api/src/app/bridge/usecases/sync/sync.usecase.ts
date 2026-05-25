@@ -1,55 +1,63 @@
 import { BadRequestException, HttpException, Injectable } from '@nestjs/common';
-
 import {
+  AnalyticsService,
+  assertSafeOutboundUrl,
+  BuildStepIssuesUsecase,
+  CreateWorkflowCommandV0,
+  CreateWorkflowV0,
+  computeWorkflowStatus,
+  ExecuteBridgeRequest,
+  JSONSchema,
+  JSONSchemaDto,
+  NotificationStep,
+  SsrfBlockedError,
+  StepIssuesDto,
+  UpdateWorkflowCommandV0,
+  UpdateWorkflowV0,
+} from '@novu/application-generic';
+import {
+  ControlValuesEntity,
+  ControlValuesRepository,
   EnvironmentEntity,
   EnvironmentRepository,
   NotificationGroupRepository,
   NotificationTemplateEntity,
   NotificationTemplateRepository,
 } from '@novu/dal';
-import {
-  AnalyticsService,
-  CreateWorkflow,
-  CreateWorkflowCommand,
-  DeleteWorkflowCommand,
-  DeleteWorkflowUseCase,
-  ExecuteBridgeRequest,
-  JSONSchema,
-  NotificationStep,
-  UpdateWorkflow,
-  UpdateWorkflowCommand,
-} from '@novu/application-generic';
+import { DiscoverOutput, DiscoverStepOutput, DiscoverWorkflowOutput, GetActionEnum } from '@novu/framework/internal';
 import {
   buildWorkflowPreferences,
+  ControlValuesLevelEnum,
+  ResourceOriginEnum,
+  ResourceTypeEnum,
+  SeverityLevelEnum,
   StepTypeEnum,
   UserSessionData,
   WorkflowCreationSourceEnum,
-  WorkflowOriginEnum,
   WorkflowPreferences,
-  WorkflowTypeEnum,
 } from '@novu/shared';
-import { DiscoverOutput, DiscoverStepOutput, DiscoverWorkflowOutput, GetActionEnum } from '@novu/framework/internal';
-
-import { SyncCommand } from './sync.command';
+import { DeleteWorkflowCommand } from '../../../workflows-v1/usecases/delete-workflow/delete-workflow.command';
+import { DeleteWorkflowUseCase } from '../../../workflows-v1/usecases/delete-workflow/delete-workflow.usecase';
 import { CreateBridgeResponseDto } from '../../dtos/create-bridge-response.dto';
-import { BuildStepIssuesUsecase } from '../../../workflows-v2/usecases/build-step-issues/build-step-issues.usecase';
-import { computeWorkflowStatus } from '../../../workflows-v2/shared/compute-workflow-status';
-import { JSONSchemaDto, StepIssuesDto } from '../../../workflows-v2/dtos';
+import { SyncCommand } from './sync.command';
 
 @Injectable()
 export class Sync {
   constructor(
-    private createWorkflowUsecase: CreateWorkflow,
-    private updateWorkflowUsecase: UpdateWorkflow,
+    private createWorkflowUsecase: CreateWorkflowV0,
+    private updateWorkflowUsecase: UpdateWorkflowV0,
     private deleteWorkflowUseCase: DeleteWorkflowUseCase,
     private notificationTemplateRepository: NotificationTemplateRepository,
     private notificationGroupRepository: NotificationGroupRepository,
     private environmentRepository: EnvironmentRepository,
     private executeBridgeRequest: ExecuteBridgeRequest,
     private buildStepIssuesUsecase: BuildStepIssuesUsecase,
-    private analyticsService: AnalyticsService
+    private analyticsService: AnalyticsService,
+    private controlValuesRepository: ControlValuesRepository
   ) {}
   async execute(command: SyncCommand): Promise<CreateBridgeResponseDto> {
+    this.assertSafeBridgeUrl(command.bridgeUrl);
+
     const environment = await this.findEnvironment(command);
     const discover = await this.executeDiscover(command);
     this.sendAnalytics(command, environment, discover);
@@ -59,6 +67,33 @@ export class Sync {
     await this.updateBridgeUrl(command);
 
     return persistedWorkflowsInBridge;
+  }
+
+  // The sync use-case persists `bridgeUrl` on the environment and immediately
+  // performs a discovery request against it. Without an SSRF guard, an
+  // authenticated BRIDGE_WRITE caller can repoint the bridge at internal hosts
+  // (loopback, RFC1918, link-local 169.254.169.254, cloud metadata) and have
+  // the API process leak the discovery response or the persisted URL to other
+  // tenants.
+  //
+  // The synchronous `assertSafeOutboundUrl` check rejects the obvious vectors
+  // (non-http schemes, embedded credentials, blocked hostnames). The
+  // connect-time DNS-pinned guard against IP-literal private addresses is
+  // applied later via `enforceSsrfProtection: true` on the actual outbound
+  // request — see `executeDiscover`.
+  private assertSafeBridgeUrl(bridgeUrl: string | undefined): void {
+    if (!bridgeUrl) {
+      throw new BadRequestException('bridgeUrl is required');
+    }
+
+    try {
+      assertSafeOutboundUrl(bridgeUrl);
+    } catch (err) {
+      if (err instanceof SsrfBlockedError) {
+        throw new BadRequestException(`bridgeUrl: ${err.message}`);
+      }
+      throw err;
+    }
   }
 
   private sendAnalytics(command: SyncCommand, environment: EnvironmentEntity, discover: DiscoverOutput) {
@@ -82,7 +117,11 @@ export class Sync {
         environmentId: command.environmentId,
         action: GetActionEnum.DISCOVER,
         retriesLimit: 1,
-        workflowOrigin: WorkflowOriginEnum.EXTERNAL,
+        workflowOrigin: ResourceOriginEnum.EXTERNAL,
+        // User-supplied bridgeUrl: pin the connection to a validated public
+        // IP and re-validate on every redirect, so IP literals like
+        // 127.0.0.1 / 169.254.169.254 / fc00::/7 cannot reach internal hosts.
+        enforceSsrfProtection: true,
       })) as DiscoverOutput;
     } catch (error) {
       if (error instanceof HttpException) {
@@ -152,10 +191,10 @@ export class Sync {
     return await this.notificationTemplateRepository.find({
       _environmentId: command.environmentId,
       type: {
-        $in: [WorkflowTypeEnum.ECHO, WorkflowTypeEnum.BRIDGE],
+        $in: [ResourceTypeEnum.ECHO, ResourceTypeEnum.BRIDGE],
       },
       origin: {
-        $in: [WorkflowOriginEnum.EXTERNAL, undefined, null],
+        $in: [ResourceOriginEnum.EXTERNAL, undefined, null],
       },
       _id: { $nin: persistedWorkflowIdsInBridge },
     });
@@ -165,14 +204,17 @@ export class Sync {
     command: SyncCommand,
     workflowsFromBridge: DiscoverWorkflowOutput[]
   ): Promise<NotificationTemplateEntity[]> {
-    const existingFrameworkWorkflows = await Promise.all(
-      workflowsFromBridge.map((workflow) =>
-        this.notificationTemplateRepository.findByTriggerIdentifier(command.environmentId, workflow.workflowId)
-      )
+    const identifiers = workflowsFromBridge.map((w) => w.workflowId);
+    const bulkResults = await this.notificationTemplateRepository.findByTriggerIdentifierBulk(
+      command.environmentId,
+      identifiers
+    );
+    const existingFrameworkWorkflows = workflowsFromBridge.map(
+      (workflow) => bulkResults.find((r) => r.triggers.some((t) => t.identifier === workflow.workflowId)) ?? null
     );
 
     existingFrameworkWorkflows.forEach((workflow, index) => {
-      if (workflow?.origin && workflow.origin !== WorkflowOriginEnum.EXTERNAL) {
+      if (workflow?.origin && workflow.origin !== ResourceOriginEnum.EXTERNAL) {
         const { workflowId } = workflowsFromBridge[index];
         throw new BadRequestException(
           `Workflow ${workflowId} was already created in Dashboard. Please use another workflowId.`
@@ -196,7 +238,7 @@ export class Sync {
   ): Promise<NotificationTemplateEntity> {
     if (existingFrameworkWorkflow) {
       return await this.updateWorkflowUsecase.execute(
-        UpdateWorkflowCommand.create(
+        UpdateWorkflowCommandV0.create(
           await this.mapDiscoverWorkflowToUpdateWorkflowCommand(existingFrameworkWorkflow, command, workflow)
         )
       );
@@ -221,9 +263,9 @@ export class Sync {
     const workflowActive = this.castToAnyNotSupportedParam(workflow)?.active ?? true;
 
     return await this.createWorkflowUsecase.execute(
-      CreateWorkflowCommand.create({
-        origin: WorkflowOriginEnum.EXTERNAL,
-        type: WorkflowTypeEnum.BRIDGE,
+      CreateWorkflowCommandV0.create({
+        origin: ResourceOriginEnum.EXTERNAL,
+        type: ResourceTypeEnum.BRIDGE,
         notificationGroupId,
         draft: workflowActive,
         environmentId: command.environmentId,
@@ -236,11 +278,12 @@ export class Sync {
         controls: {
           schema: workflow.controls?.schema as unknown as JSONSchema,
         },
-        rawData: workflow as unknown as Record<string, unknown>,
+        rawData: this.buildRawData(workflow),
         payloadSchema: workflow.payload?.schema as unknown as JSONSchema,
         active: workflowActive,
         status: computeWorkflowStatus(workflowActive, steps),
         description: this.getWorkflowDescription(workflow),
+        severity: workflow.severity || SeverityLevelEnum.NONE,
         data: this.castToAnyNotSupportedParam(workflow)?.data,
         tags: this.getWorkflowTags(workflow),
         defaultPreferences: this.getWorkflowPreferences(workflow),
@@ -252,12 +295,13 @@ export class Sync {
     workflowExist: NotificationTemplateEntity,
     command: SyncCommand,
     workflow: DiscoverWorkflowOutput
-  ): Promise<UpdateWorkflowCommand> {
+  ): Promise<UpdateWorkflowCommandV0> {
     const steps = await this.mapSteps(command, workflow.steps, workflowExist);
     const workflowActive = this.castToAnyNotSupportedParam(workflow)?.active ?? true;
 
     return {
       id: workflowExist._id,
+      existingWorkflow: workflowExist,
       environmentId: command.environmentId,
       organizationId: command.organizationId,
       userId: command.userId,
@@ -267,14 +311,13 @@ export class Sync {
       controls: {
         schema: workflow.controls?.schema as unknown as JSONSchemaDto,
       },
-      rawData: workflow,
+      rawData: this.buildRawData(workflow),
       payloadSchema: workflow.payload?.schema as unknown as JSONSchemaDto,
-      type: WorkflowTypeEnum.BRIDGE,
+      type: ResourceTypeEnum.BRIDGE,
       description: this.getWorkflowDescription(workflow),
       data: this.castToAnyNotSupportedParam(workflow)?.data,
       tags: this.getWorkflowTags(workflow),
       active: workflowActive,
-      status: computeWorkflowStatus(workflowActive, steps),
       defaultPreferences: this.getWorkflowPreferences(workflow),
     };
   }
@@ -284,12 +327,23 @@ export class Sync {
     commandWorkflowSteps: DiscoverStepOutput[],
     workflow?: NotificationTemplateEntity | undefined
   ): Promise<NotificationStep[]> {
+    let preloadedControlValues: ControlValuesEntity[] | undefined;
+
+    if (workflow?._id) {
+      preloadedControlValues = await this.controlValuesRepository.find({
+        _environmentId: command.environmentId,
+        _organizationId: command.organizationId,
+        _workflowId: workflow._id,
+        level: ControlValuesLevelEnum.STEP_CONTROLS,
+      });
+    }
+
     return Promise.all(
       commandWorkflowSteps.map(async (step: DiscoverStepOutput) => {
         const foundStep = workflow?.steps?.find((workflowStep) => workflowStep.stepId === step.stepId);
 
         const issues: StepIssuesDto = await this.buildStepIssuesUsecase.execute({
-          workflowOrigin: WorkflowOriginEnum.EXTERNAL,
+          workflowOrigin: ResourceOriginEnum.EXTERNAL,
           user: {
             _id: command.userId,
             environmentId: command.environmentId,
@@ -299,6 +353,7 @@ export class Sync {
           workflow,
           stepType: step.type as StepTypeEnum,
           controlSchema: step.controls?.schema as unknown as JSONSchemaDto,
+          ...(preloadedControlValues ? { preloadedControlValues } : {}),
         });
 
         const template = {
@@ -361,9 +416,23 @@ export class Sync {
     return workflow.tags || [];
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private buildRawData(workflow: DiscoverWorkflowOutput): Record<string, unknown> {
+    const rawData = { ...workflow } as Record<string, unknown>;
+
+    if (rawData.payload && typeof rawData.payload === 'object') {
+      const { unknownSchema: _payloadUnknownSchema, ...payloadRest } = rawData.payload as Record<string, unknown>;
+      rawData.payload = payloadRest;
+    }
+
+    if (rawData.controls && typeof rawData.controls === 'object') {
+      const { unknownSchema: _controlsUnknownSchema, ...controlsRest } = rawData.controls as Record<string, unknown>;
+      rawData.controls = controlsRest;
+    }
+
+    return rawData;
+  }
+
   private castToAnyNotSupportedParam(param: any): any {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return param as any;
   }
 }

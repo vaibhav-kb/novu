@@ -1,10 +1,12 @@
-import { expect } from 'chai';
+import { Novu } from '@novu/api';
 import { SubscriberEntity, SubscriberRepository } from '@novu/dal';
 import { SubscribersService, UserSession } from '@novu/testing';
-import { Novu } from '@novu/api';
+import axios from 'axios';
+import { expect } from 'chai';
+import { Types } from 'mongoose';
 import { expectSdkValidationExceptionGeneric, initNovuClassSdk } from '../../shared/helpers/e2e/sdk/e2e-sdk.helper';
 
-describe('Bulk create subscribers - /v1/subscribers/bulk (POST) #novu-v2', function () {
+describe('Bulk create subscribers - /v1/subscribers/bulk (POST) #novu-v2', () => {
   let session: UserSession;
   let subscriber: SubscriberEntity;
   let subscriberService: SubscribersService;
@@ -19,7 +21,7 @@ describe('Bulk create subscribers - /v1/subscribers/bulk (POST) #novu-v2', funct
     novuClient = initNovuClassSdk(session);
   });
 
-  it('should return the response array in correct format', async function () {
+  it('should return the response array in correct format', async () => {
     const bulkResult = await novuClient.subscribers.createBulk({
       subscribers: [
         {
@@ -51,7 +53,7 @@ describe('Bulk create subscribers - /v1/subscribers/bulk (POST) #novu-v2', funct
     expect(failed?.length).to.equal(0);
   });
 
-  it('should create and update subscribers', async function () {
+  it('should create and update subscribers', async () => {
     const res = await novuClient.subscribers.createBulk({
       subscribers: [
         {
@@ -97,7 +99,7 @@ describe('Bulk create subscribers - /v1/subscribers/bulk (POST) #novu-v2', funct
     expect(createdSubscriber?.data?.test1).to.equal('test value1');
   });
 
-  it('should throw an error when sending more than 500 subscribers', async function () {
+  it('should throw an error when sending more than 500 subscribers', async () => {
     const payload = {
       subscriberId: 'test2',
       firstName: 'sub2',
@@ -116,7 +118,7 @@ describe('Bulk create subscribers - /v1/subscribers/bulk (POST) #novu-v2', funct
     );
   });
 
-  it('should recreate deleted subscribers', async function () {
+  it('should recreate deleted subscribers', async () => {
     const existingSubscriber = { subscriberId: subscriber.subscriberId, firstName: 'existingSubscriber' };
     const newSubscriber1 = {
       subscriberId: 'test1',
@@ -151,5 +153,61 @@ describe('Bulk create subscribers - /v1/subscribers/bulk (POST) #novu-v2', funct
     expect(secondResponseData.created[0].subscriberId).to.equal(newSubscriber1.subscriberId);
     expect(secondResponseData.created[1].subscriberId).to.equal(newSubscriber2.subscriberId);
     expect(secondResponseData.updated[0].subscriberId).to.equal(existingSubscriber.subscriberId);
+  });
+
+  it('should ignore _environmentId and _organizationId fields in bulk subscriber items', async () => {
+    const foreignEnvironmentId = new Types.ObjectId().toString();
+    const foreignOrganizationId = new Types.ObjectId().toString();
+
+    const originalEnvironmentId = subscriber._environmentId;
+    const originalOrganizationId = subscriber._organizationId;
+
+    const response = await axios.post(
+      `${session.serverUrl}/v1/subscribers/bulk`,
+      {
+        subscribers: [
+          {
+            subscriberId: subscriber.subscriberId,
+            firstName: 'updated-first-name',
+            _environmentId: foreignEnvironmentId,
+            _organizationId: foreignOrganizationId,
+          },
+          {
+            subscriberId: 'cross-tenant-create-test',
+            firstName: 'new',
+            email: 'new@test.co',
+            _environmentId: foreignEnvironmentId,
+            _organizationId: foreignOrganizationId,
+          },
+        ],
+      },
+      {
+        headers: { authorization: `ApiKey ${session.apiKey}` },
+      }
+    );
+
+    expect(response.status).to.equal(201);
+
+    const updatedSubscriber = await subscriberRepository.findBySubscriberId(
+      session.environment._id,
+      subscriber.subscriberId
+    );
+    expect(updatedSubscriber?.firstName).to.equal('updated-first-name');
+    expect(updatedSubscriber?._environmentId).to.equal(originalEnvironmentId);
+    expect(updatedSubscriber?._organizationId).to.equal(originalOrganizationId);
+
+    const createdSubscriber = await subscriberRepository.findBySubscriberId(
+      session.environment._id,
+      'cross-tenant-create-test'
+    );
+    expect(createdSubscriber).to.be.ok;
+    expect(createdSubscriber?._environmentId).to.equal(session.environment._id);
+    expect(createdSubscriber?._organizationId).to.equal(session.organization._id);
+
+    const leakedSubscriber = await subscriberRepository.findBySubscriberId(
+      foreignEnvironmentId,
+      'cross-tenant-create-test'
+    );
+    expect(leakedSubscriber).to.equal(null);
   });
 });

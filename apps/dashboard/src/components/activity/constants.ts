@@ -1,7 +1,7 @@
-import { ActivityFiltersData } from '@/types/activity';
 import { ChannelTypeEnum, JobStatusEnum } from '@novu/shared';
 import { IconType } from 'react-icons/lib';
 import { RiCheckboxCircleFill, RiErrorWarningFill, RiForbidFill, RiLoader3Line, RiLoader4Fill } from 'react-icons/ri';
+import { ActivityFiltersData } from '@/types/activity';
 import { StatusBadgeProps } from '../primitives/status-badge';
 
 export const STATUS_STYLES = {
@@ -79,13 +79,6 @@ export const JOB_STATUS_CONFIG: Record<
   },
 };
 
-export const DATE_RANGE_OPTIONS = [
-  { value: '24h', label: 'Last 24 hours', ms: 24 * 60 * 60 * 1000 },
-  { value: '7d', label: 'Last 7 days', ms: 7 * 24 * 60 * 60 * 1000 },
-  { value: '30d', label: 'Last 30 days', ms: 30 * 24 * 60 * 60 * 1000 },
-  { value: '90d', label: 'Last 90 days', ms: 90 * 24 * 60 * 60 * 1000 },
-];
-
 export const DEFAULT_DATE_RANGE = '24h';
 
 export const CHANNEL_OPTIONS = [
@@ -103,4 +96,7 @@ export const defaultActivityFilters: ActivityFiltersData = {
   transactionId: '',
   subscriberId: '',
   topicKey: '',
+  severity: [],
+  contextKeys: [],
+  subscriptionId: '',
 } as const;

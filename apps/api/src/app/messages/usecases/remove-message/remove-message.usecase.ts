@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { MessageRepository } from '@novu/dal';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { buildFeedKey, buildMessageCountKey, InvalidateCacheService } from '@novu/application-generic';
+import { MessageRepository } from '@novu/dal';
 
 import { RemoveMessageCommand } from './remove-message.command';
 
@@ -22,13 +22,6 @@ export class RemoveMessage {
 
     if (!message.subscriber)
       throw new BadRequestException(`A subscriber was not found for message ${command.messageId}`);
-
-    await this.invalidateCache.invalidateQuery({
-      key: buildFeedKey().invalidate({
-        subscriberId: message.subscriber.subscriberId,
-        _environmentId: command.environmentId,
-      }),
-    });
 
     await this.invalidateCache.invalidateQuery({
       key: buildMessageCountKey().invalidate({

@@ -1,23 +1,29 @@
-import { Card } from '@/components/primitives/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives/tabs';
-import { ROUTES } from '@/utils/routes';
-import { OrganizationProfile, UserProfile } from '@clerk/clerk-react';
-import { Appearance } from '@clerk/types';
-import { motion } from 'motion/react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { Plan } from '../components/billing/plan';
-import { DashboardLayout } from '../components/dashboard-layout';
-import { useFetchSubscription } from '../hooks/use-fetch-subscription';
+import { UserProfile as ClerkUserProfile, OrganizationProfile } from '@clerk/clerk-react';
+import type { Appearance } from '@clerk/types';
 import {
   ApiServiceLevelEnum,
   FeatureFlagsKeysEnum,
   FeatureNameEnum,
-  getFeatureForTierAsBoolean,
   GetSubscriptionDto,
+  getFeatureForTierAsBoolean,
+  PermissionsEnum,
 } from '@novu/shared';
-import { useFeatureFlag } from '@/hooks/use-feature-flag';
+import { motion } from 'motion/react';
+import { useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Card } from '@/components/primitives/card';
 import { InlineToast } from '@/components/primitives/inline-toast';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives/tabs';
 import { OrganizationSettings } from '@/components/settings/organization-settings';
+import { EE_AUTH_PROVIDER, IS_SELF_HOSTED } from '@/config';
+import { useFeatureFlag } from '@/hooks/use-feature-flag';
+import { useHasPermission } from '@/hooks/use-has-permission';
+import { TeamMembers } from '@/utils/better-auth/components/team-members';
+import { UserProfile as BetterAuthUserProfile } from '@/utils/better-auth/index';
+import { ROUTES } from '@/utils/routes';
+import { Plan } from '../components/billing/plan';
+import { DashboardLayout } from '../components/dashboard-layout';
+import { useFetchSubscription } from '../hooks/use-fetch-subscription';
 
 const FADE_ANIMATION = {
   initial: { opacity: 0 },
@@ -28,8 +34,9 @@ const FADE_ANIMATION = {
 
 const getClerkComponentAppearance = (isRbacEnabled: boolean): Appearance => ({
   variables: {
-    colorPrimary: 'rgba(82, 88, 102, 0.95)',
+    colorPrimary: 'hsl(var(--bg-surface))',
     colorText: 'rgba(82, 88, 102, 0.95)',
+    fontSize: '14px',
   },
   elements: {
     navbar: { display: 'none' },
@@ -67,6 +74,7 @@ const getClerkComponentAppearance = (isRbacEnabled: boolean): Appearance => ({
     formFieldRow__role: {
       visibility: isRbacEnabled ? 'visible' : 'hidden',
     },
+    apiKeys: 'py-1',
   },
 });
 
@@ -76,8 +84,11 @@ export function SettingsPage() {
   const { subscription } = useFetchSubscription();
   const isRbacEnabledFlag = useFeatureFlag(FeatureFlagsKeysEnum.IS_RBAC_ENABLED, false);
   const isRbacEnabled = checkRbacEnabled(subscription, isRbacEnabledFlag);
+  const has = useHasPermission();
+  const hasBillingPermission = has({ permission: PermissionsEnum.BILLING_WRITE });
 
   const clerkAppearance = getClerkComponentAppearance(isRbacEnabled);
+  const UserProfile = EE_AUTH_PROVIDER === 'clerk' ? ClerkUserProfile : BetterAuthUserProfile;
 
   function checkRbacEnabled(subscription: GetSubscriptionDto | undefined, featureFlag: boolean) {
     const apiServiceLevel = subscription?.apiServiceLevel || ApiServiceLevelEnum.FREE;
@@ -89,8 +100,16 @@ export function SettingsPage() {
     return rbacFeatureEnabled && featureFlag;
   }
 
+  const canShowBilling = !IS_SELF_HOSTED && hasBillingPermission;
+
   const currentTab =
     location.pathname === ROUTES.SETTINGS ? 'account' : location.pathname.split('/settings/')[1] || 'account';
+
+  useEffect(() => {
+    if (currentTab === 'billing' && !canShowBilling) {
+      navigate(ROUTES.SETTINGS_ACCOUNT, { replace: true });
+    }
+  }, [currentTab, canShowBilling, navigate]);
 
   const handleTabChange = (value: string) => {
     switch (value) {
@@ -104,15 +123,18 @@ export function SettingsPage() {
         navigate(ROUTES.SETTINGS_TEAM);
         break;
       case 'billing':
-        navigate(ROUTES.SETTINGS_BILLING);
+        if (canShowBilling) {
+          navigate(ROUTES.SETTINGS_BILLING);
+        }
+
         break;
     }
   };
 
   return (
     <DashboardLayout headerStartItems={<h1 className="text-foreground-950">Settings</h1>}>
-      <Tabs value={currentTab} onValueChange={handleTabChange} className="w-full">
-        <TabsList align="center" variant="regular" className="border-t-transparent !py-0">
+      <Tabs value={currentTab} onValueChange={handleTabChange} className="-mx-2 w-full">
+        <TabsList align="center" variant="regular" className="border-t-transparent py-0!">
           <TabsTrigger variant="regular" value="account" size="xl">
             Account
           </TabsTrigger>
@@ -123,16 +145,20 @@ export function SettingsPage() {
             Team
           </TabsTrigger>
 
-          <TabsTrigger variant="regular" value="billing" size="xl">
-            Billing
-          </TabsTrigger>
+          {canShowBilling && (
+            <TabsTrigger variant="regular" value="billing" size="xl">
+              Billing
+            </TabsTrigger>
+          )}
         </TabsList>
 
-        <div className={`mx-auto mt-1 px-1.5 ${currentTab === 'billing' ? 'max-w-[1400px]' : 'max-w-[700px]'}`}>
+        <div
+          className={`mx-auto mt-1 px-1.5 ${currentTab === 'billing' && canShowBilling ? 'max-w-[1400px]' : 'max-w-[700px]'}`}
+        >
           <TabsContent value="account" className="rounded-lg">
             <motion.div {...FADE_ANIMATION}>
               <Card className="border-none shadow-none">
-                <div className="pb-6 pt-4">
+                <div className="pb-6 pt-4 flex flex-col">
                   <UserProfile appearance={clerkAppearance}>
                     <UserProfile.Page label="account" />
                     <UserProfile.Page label="security" />
@@ -151,8 +177,8 @@ export function SettingsPage() {
           <TabsContent value="organization" className="rounded-lg">
             <motion.div {...FADE_ANIMATION}>
               <Card className="border-none shadow-none">
-                <div className="pb-6 pt-4">
-                  {subscription?.apiServiceLevel === ApiServiceLevelEnum.FREE && (
+                <div className="pb-6 pt-4 flex flex-col">
+                  {subscription?.apiServiceLevel === ApiServiceLevelEnum.FREE && canShowBilling && (
                     <InlineToast
                       title="Tip:"
                       description="Hide Novu branding from your notification channels by upgrading to a paid plan."
@@ -173,8 +199,8 @@ export function SettingsPage() {
           <TabsContent value="team" className="rounded-lg">
             <motion.div {...FADE_ANIMATION}>
               <Card className="border-none shadow-none">
-                <div className="pb-6 pt-4">
-                  {isRbacEnabledFlag && !isRbacEnabled && (
+                <div className={`pb-6 pt-4 flex flex-col ${isRbacEnabled ? 'show-role-column' : 'hide-role-column'}`}>
+                  {isRbacEnabledFlag && !isRbacEnabled && canShowBilling && (
                     <InlineToast
                       title="Tip:"
                       description="Get role-based access control and add unlimited members by upgrading."
@@ -184,24 +210,29 @@ export function SettingsPage() {
                       variant="tip"
                     />
                   )}
-                  <OrganizationProfile appearance={clerkAppearance}>
-                    <OrganizationProfile.Page label="members" />
-                    <OrganizationProfile.Page label="general" />
-                  </OrganizationProfile>
+                  {EE_AUTH_PROVIDER === 'clerk' ? (
+                    <OrganizationProfile appearance={clerkAppearance}>
+                      <OrganizationProfile.Page label="general" />
+                    </OrganizationProfile>
+                  ) : (
+                    <TeamMembers appearance={clerkAppearance} />
+                  )}
                 </div>
               </Card>
             </motion.div>
           </TabsContent>
 
-          <TabsContent value="billing" className="rounded-lg">
-            <motion.div {...FADE_ANIMATION}>
-              <Card className="border-none shadow-none">
-                <div className="pb-6 pt-4">
-                  <Plan />
-                </div>
-              </Card>
-            </motion.div>
-          </TabsContent>
+          {canShowBilling && (
+            <TabsContent value="billing" className="rounded-lg">
+              <motion.div {...FADE_ANIMATION}>
+                <Card className="border-none shadow-none">
+                  <div className="pb-6 pt-4 flex flex-col">
+                    <Plan />
+                  </div>
+                </Card>
+              </motion.div>
+            </TabsContent>
+          )}
         </div>
       </Tabs>
     </DashboardLayout>

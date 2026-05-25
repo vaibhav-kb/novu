@@ -1,25 +1,24 @@
-import type { Appearance as JsAppearance, IconRenderer, IconOverrides as JsIconOverrides, IconKey } from '@novu/js/ui';
-
-import type { ReactAppearance, ReactIconRenderer } from './types';
+import type { AllAppearance, AllIconKey, AllIconOverrides } from '@novu/js/ui';
 import { MountedElement } from '../context/RendererContext';
+import type { ReactAllAppearance, ReactIconRenderer, ReactInboxAppearance, ReactSubscriptionAppearance } from './types';
 
 export function adaptAppearanceForJs(
-  appearance: ReactAppearance,
+  appearance: ReactInboxAppearance | ReactSubscriptionAppearance | ReactAllAppearance,
   mountElement: (el: HTMLElement, mountedElement: MountedElement) => () => void
-): JsAppearance | undefined {
+): AllAppearance | undefined {
   if (!appearance) {
     return undefined;
   }
+  const { icons, ...restAppearance } = appearance;
+  const jsAppearance = { ...restAppearance } as AllAppearance;
 
-  const jsAppearance: JsAppearance = JSON.parse(JSON.stringify(appearance));
-
-  if (appearance.icons) {
-    const jsIcons: JsIconOverrides = {};
-    const reactIcons = appearance.icons;
-    const iconKeys = Object.keys(reactIcons) as IconKey[];
+  if (icons) {
+    const jsIcons: AllIconOverrides = {};
+    const iconKeys = Object.keys(icons) as Array<AllIconKey>;
 
     for (const iconKey of iconKeys) {
-      const reactRenderer = reactIcons[iconKey];
+      // @ts-expect-error: cant easily fix this type error
+      const reactRenderer = icons[iconKey] as ReactIconRenderer;
 
       if (reactRenderer) {
         jsIcons[iconKey] = (el: HTMLDivElement, props: { class?: string }) => {

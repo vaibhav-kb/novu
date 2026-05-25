@@ -1,14 +1,14 @@
+import { SignUp as SignUpForm } from '@clerk/clerk-react';
+import { useEffect } from 'react';
 import { AuthSideBanner } from '@/components/auth/auth-side-banner';
 import { RegionPicker } from '@/components/auth/region-picker';
 import { PageMeta } from '@/components/page-meta';
 import { clerkSignupAppearance } from '@/utils/clerk-appearance';
 import { ROUTES } from '@/utils/routes';
-import { SignUp as SignUpForm } from '@clerk/clerk-react';
-import { useEffect } from 'react';
+import { IS_SELF_HOSTED } from '../config';
 import { useSegment } from '../context/segment';
 import { TelemetryEvent } from '../utils/telemetry';
 import { getReferrer, getUtmParams } from '../utils/tracking';
-import { IS_SELF_HOSTED } from '../config';
 
 export const SignUpPage = () => {
   const segment = useSegment();
@@ -21,13 +21,11 @@ export const SignUpPage = () => {
       ...utmParams,
       referrer,
     });
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <div className="flex min-h-screen w-full flex-col md:max-w-[1100px] md:flex-row md:gap-36">
-      <PageMeta title="Sign up" />
+      <PageMeta title="Sign up for Novu" />
       <div className="w-full md:w-auto">
         <AuthSideBanner />
       </div>

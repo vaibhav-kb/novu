@@ -10,19 +10,20 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import {
   CacheService,
+  FeatureFlagsService,
   HttpResponseHeaderKeysEnum,
   Instrument,
-  FeatureFlagsService,
   PinoLogger,
 } from '@novu/application-generic';
+import { ApiAuthSchemeEnum, FeatureFlagsKeysEnum, UserSessionData } from '@novu/shared';
+import { createHash } from 'crypto';
 import { Observable, of, throwError } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
-import { createHash } from 'crypto';
-import { ApiAuthSchemeEnum, FeatureFlagsKeysEnum, UserSessionData } from '@novu/shared';
+import { EXCLUDE_FROM_IDEMPOTENCY } from './exclude-from-idempotency';
 
-const LOG_CONTEXT = 'IdempotencyInterceptor';
 const IDEMPOTENCY_CACHE_TTL = 60 * 60 * 24; // 24h
 const IDEMPOTENCY_PROGRESS_TTL = 60 * 5; // 5min
 
@@ -32,13 +33,14 @@ enum ReqStatusEnum {
   ERROR = 'error',
 }
 
-export const DOCS_LINK = 'https://docs.novu.co/additional-resources/idempotency';
-export const ALLOWED_AUTH_SCHEMES = [ApiAuthSchemeEnum.API_KEY];
+const DOCS_LINK = 'https://docs.novu.co/additional-resources/idempotency';
+const ALLOWED_AUTH_SCHEMES = [ApiAuthSchemeEnum.API_KEY];
 const ALLOWED_METHODS = ['post', 'patch'];
 
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
   constructor(
+    private readonly reflector: Reflector,
     private readonly cacheService: CacheService,
     private featureFlagService: FeatureFlagsService,
     private logger: PinoLogger
@@ -47,6 +49,14 @@ export class IdempotencyInterceptor implements NestInterceptor {
   }
 
   protected async isEnabled(context: ExecutionContext): Promise<boolean> {
+    const isExcluded = this.reflector.getAllAndOverride<boolean>(EXCLUDE_FROM_IDEMPOTENCY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isExcluded) {
+      return false;
+    }
+
     const isAllowedAuthScheme = this.isAllowedAuthScheme(context);
     if (!isAllowedAuthScheme) {
       return true;
@@ -162,8 +172,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
   }
 
   private setHeaders(response: any, headers: Record<string, string>) {
-    // eslint-disable-next-line array-callback-return
-    Object.keys(headers).map((key) => {
+    Object.keys(headers).forEach((key) => {
       if (headers[key]) {
         response.set(key, headers[key]);
       }
@@ -172,7 +181,14 @@ export class IdempotencyInterceptor implements NestInterceptor {
 
   private hashRequestBody(body: object): string {
     const hash = createHash('blake2s256');
-    hash.update(Buffer.from(JSON.stringify(body)));
+
+    try {
+      hash.update(Buffer.from(JSON.stringify(body)));
+    } catch (error) {
+      // For multipart/form-data or other non-serializable bodies,
+      // create a hash from the object's string representation
+      hash.update(Buffer.from(String(body)));
+    }
 
     return hash.digest('hex');
   }

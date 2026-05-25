@@ -1,14 +1,14 @@
+import { PermissionsEnum } from '@novu/shared';
+import { RiBookMarkedLine, RiRouteFill } from 'react-icons/ri';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { VersionControlDev } from '@/components/icons/version-control-dev';
 import { VersionControlProd } from '@/components/icons/version-control-prod';
 import { Button } from '@/components/primitives/button';
 import { PermissionButton } from '@/components/primitives/permission-button';
 import { useEnvironment } from '@/context/environment/hooks';
-import { PermissionsEnum } from '@novu/shared';
-import { RiBookMarkedLine, RiRouteFill } from 'react-icons/ri';
-import { Link, useNavigate, useParams } from 'react-router-dom';
 import { buildRoute, ROUTES } from '../utils/routes';
-import { LinkButton } from './primitives/button-link';
 import { ListNoResults } from './list-no-results';
+import { LinkButton } from './primitives/button-link';
 
 interface WorkflowListEmptyProps {
   emptySearchResults?: boolean;
@@ -43,8 +43,8 @@ const WorkflowListEmptyProd = ({ switchToDev }: { switchToDev: () => void }) => 
     <div className="flex flex-col items-center gap-2 text-center">
       <span className="text-foreground-900 block font-medium">No workflows in production</span>
       <p className="text-foreground-400 max-w-[60ch] text-sm">
-        To sync workflows to production, switch to Development environment, select a workflow and click on 'Sync to
-        Production,' or sync via novu CLI for code-first workflows.
+        To publish workflows to production, switch to Development and click 'Publish changes' , or use the Novu CLI for
+        code-first workflows.
       </p>
     </div>
 

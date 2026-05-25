@@ -1,7 +1,7 @@
 import { ApiPropertyOptional, getSchemaPath } from '@nestjs/swagger';
-import { IsOptional, ValidateNested } from 'class-validator';
+import { WorkflowPreferencesDto } from '@novu/application-generic';
 import { Type } from 'class-transformer';
-import { WorkflowPreferencesDto } from './workflow-preferences.dto';
+import { IsOptional, ValidateNested } from 'class-validator';
 
 export class PreferencesRequestDto {
   @ApiPropertyOptional({

@@ -1,20 +1,20 @@
 import { memo, useCallback, useMemo } from 'react';
-import { Path, useFieldArray, useWatch, type Control } from 'react-hook-form';
+import { type Control, Path, useFieldArray, useWatch } from 'react-hook-form';
 import { RiAddLine } from 'react-icons/ri';
 import { v4 as uuidv4 } from 'uuid';
 
 import { Button } from '@/components/primitives/button';
 import { Label } from '@/components/primitives/label';
 import { cn } from '@/utils/ui';
-
+import { MAX_NESTING_DEPTH } from '../constants';
+import { useSchemaPropertyType } from '../hooks/use-schema-property-type';
+import type { JSONSchema7 } from '../json-schema';
+import { SchemaPropertyRow } from '../schema-property-row';
+import type { VariableUsageInfo } from '../utils/check-variable-usage';
+import { newProperty } from '../utils/json-helpers';
 import { getMarginClassPx } from '../utils/ui-helpers';
 import type { PropertyListItem, SchemaEditorFormValues } from '../utils/validation-schema';
-import type { VariableUsageInfo } from '../utils/check-variable-usage';
-import type { JSONSchema7 } from '../json-schema';
-import { newProperty } from '../utils/json-helpers';
 import { PropertyTypeSelector } from './property-type-selector';
-import { SchemaPropertyRow } from '../schema-property-row';
-import { MAX_NESTING_DEPTH } from '../constants';
 
 interface ArrayItemPropertyProps {
   className?: string;
@@ -25,6 +25,7 @@ interface ArrayItemPropertyProps {
   arrayItemPath: string;
   onCheckVariableUsage?: (keyName: string, parentPath: string) => VariableUsageInfo;
   depth: number;
+  readOnly?: boolean;
 }
 
 const ArrayItemProperty = memo<ArrayItemPropertyProps>(function ArrayItemProperty({
@@ -36,6 +37,7 @@ const ArrayItemProperty = memo<ArrayItemPropertyProps>(function ArrayItemPropert
   arrayItemPath,
   onCheckVariableUsage,
   depth,
+  readOnly = false,
 }) {
   const itemNestedItem = useWatch({
     control,
@@ -59,6 +61,7 @@ const ArrayItemProperty = memo<ArrayItemPropertyProps>(function ArrayItemPropert
       variableUsageInfo={itemVariableUsageInfo}
       onCheckVariableUsage={onCheckVariableUsage}
       depth={depth + 1}
+      readOnly={readOnly}
     />
   );
 });
@@ -73,6 +76,7 @@ interface ArraySectionProps {
   currentFullPath: string;
   onCheckVariableUsage?: (keyName: string, parentPath: string) => VariableUsageInfo;
   depth: number;
+  readOnly?: boolean;
 }
 
 export const ArraySection = memo<ArraySectionProps>(function ArraySection({
@@ -85,9 +89,11 @@ export const ArraySection = memo<ArraySectionProps>(function ArraySection({
   currentFullPath,
   onCheckVariableUsage,
   depth,
+  readOnly = false,
 }) {
   const itemSchemaObject = useWatch({ control, name: itemSchemaObjectPath }) as JSONSchema7 | undefined;
-  const itemIsObject = itemSchemaObject?.type === 'object';
+  const itemType = useSchemaPropertyType(itemSchemaObject);
+  const itemIsObject = itemType === 'object';
 
   const { fields, append, remove } = useFieldArray({
     control,
@@ -125,6 +131,7 @@ export const ArraySection = memo<ArraySectionProps>(function ArraySection({
           control={control}
           setValue={setValue}
           getValues={getValues}
+          isDisabled={readOnly}
         />
       </div>
 
@@ -140,6 +147,7 @@ export const ArraySection = memo<ArraySectionProps>(function ArraySection({
               arrayItemPath={arrayItemPath}
               onCheckVariableUsage={onCheckVariableUsage}
               depth={depth}
+              readOnly={readOnly}
             />
           ))}
           {isAtMaxDepth && (
@@ -155,7 +163,7 @@ export const ArraySection = memo<ArraySectionProps>(function ArraySection({
               onClick={handleAddArrayItemObjectProperty}
               leadingIcon={RiAddLine}
               className="mt-1"
-              disabled={isAtMaxDepth}
+              disabled={isAtMaxDepth || readOnly}
             >
               Add Item Property
             </Button>

@@ -3,7 +3,8 @@
  */
 
 import { NovuCore } from "../core.js";
-import { encodeSimple } from "../lib/encodings.js";
+import { encodeFormQuery, encodeSimple } from "../lib/encodings.js";
+import { matchStatusCode } from "../lib/http.js";
 import * as M from "../lib/matchers.js";
 import { compactMap } from "../lib/primitives.js";
 import { safeParse } from "../lib/schemas.js";
@@ -31,11 +32,12 @@ import { Result } from "../types/fp.js";
  * @remarks
  * Retrieve subscriber channel preferences by its unique key identifier **subscriberId**.
  *     This API returns all five channels preferences for all workflows and global preferences.
+ *
+ * This operation requires either {@link Security.bearerAuth} or {@link Security.secretKey} to be set on the `security` parameter when initializing the SDK.
  */
 export function subscribersPreferencesList(
   client: NovuCore,
-  subscriberId: string,
-  idempotencyKey?: string | undefined,
+  request: operations.SubscribersControllerGetSubscriberPreferencesRequest,
   options?: RequestOptions,
 ): APIPromise<
   Result<
@@ -54,16 +56,14 @@ export function subscribersPreferencesList(
 > {
   return new APIPromise($do(
     client,
-    subscriberId,
-    idempotencyKey,
+    request,
     options,
   ));
 }
 
 async function $do(
   client: NovuCore,
-  subscriberId: string,
-  idempotencyKey?: string | undefined,
+  request: operations.SubscribersControllerGetSubscriberPreferencesRequest,
   options?: RequestOptions,
 ): Promise<
   [
@@ -83,14 +83,8 @@ async function $do(
     APICall,
   ]
 > {
-  const input: operations.SubscribersControllerGetSubscriberPreferencesRequest =
-    {
-      subscriberId: subscriberId,
-      idempotencyKey: idempotencyKey,
-    };
-
   const parsed = safeParse(
-    input,
+    request,
     (value) =>
       operations
         .SubscribersControllerGetSubscriberPreferencesRequest$outboundSchema
@@ -109,10 +103,14 @@ async function $do(
       charEncoding: "percent",
     }),
   };
-
   const path = pathToFunc("/v2/subscribers/{subscriberId}/preferences")(
     pathParams,
   );
+
+  const query = encodeFormQuery({
+    "contextKeys": payload.contextKeys,
+    "criticality": payload.criticality,
+  });
 
   const headers = new Headers(compactMap({
     Accept: "application/json",
@@ -124,13 +122,13 @@ async function $do(
   }));
 
   const securityInput = await extractSecurity(client._options.security);
-  const requestSecurity = resolveGlobalSecurity(securityInput);
+  const requestSecurity = resolveGlobalSecurity(securityInput, [1, 0]);
 
   const context = {
     options: client._options,
     baseURL: options?.serverURL ?? client._baseURL ?? "",
     operationID: "SubscribersController_getSubscriberPreferences",
-    oAuth2Scopes: [],
+    oAuth2Scopes: null,
 
     resolvedSecurity: requestSecurity,
 
@@ -157,6 +155,7 @@ async function $do(
     baseURL: options?.serverURL,
     path: path,
     headers: headers,
+    query: query,
     body: body,
     userAgent: client._options.userAgent,
     timeoutMs: options?.timeoutMs || client._options.timeoutMs || -1,
@@ -168,23 +167,8 @@ async function $do(
 
   const doResult = await client._do(req, {
     context,
-    errorCodes: [
-      "400",
-      "401",
-      "403",
-      "404",
-      "405",
-      "409",
-      "413",
-      "414",
-      "415",
-      "422",
-      "429",
-      "4XX",
-      "500",
-      "503",
-      "5XX",
-    ],
+    isErrorStatusCode: (statusCode: number) =>
+      matchStatusCode({ status: statusCode } as Response, ["4XX", "5XX"]),
     retryConfig: context.retryConfig,
     retryCodes: context.retryCodes,
   });

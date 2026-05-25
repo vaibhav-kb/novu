@@ -1,11 +1,11 @@
 import { EmailProviderIdEnum } from '@novu/shared';
 import {
   ChannelTypeEnum,
-  ISendMessageSuccessResponse,
+  CheckIntegrationResponseEnum,
+  ICheckIntegrationResponse,
   IEmailOptions,
   IEmailProvider,
-  ICheckIntegrationResponse,
-  CheckIntegrationResponseEnum,
+  ISendMessageSuccessResponse,
 } from '@novu/stateless';
 import { Braze, MessagesSendObject, UsersExportIdsObject, UsersExportIdsResponse } from 'braze-api';
 import { BaseProvider, CasingEnum } from '../../../base.provider';
@@ -69,7 +69,7 @@ export class BrazeEmailProvider extends BaseProvider implements IEmailProvider {
           bcc: options.bcc?.join(','),
           plaintext_body: options.text || null,
           extras: options.payloadDetails || {},
-          headers: {},
+          headers: options.headers && Object.keys(options.headers).length > 0 ? options.headers : {},
           should_inline_css: true,
           attachments: [],
         },

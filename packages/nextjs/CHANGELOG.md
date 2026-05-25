@@ -1,3 +1,129 @@
+## v3.16.0 (2026-04-27)
+
+### 🚀 Features
+
+- **nextjs:** create connect chat channel connections ([#10711](https://github.com/novuhq/novu/pull/10711))
+
+### ❤️ Thank You
+
+- George Djabarov @djabarovgeorge
+
+## v3.15.0 (2026-04-13)
+
+This was a version bump only for @novu/nextjs to align it with other projects, there were no code changes.
+
+## v3.14.1 (2026-02-27)
+
+This was a version bump only for @novu/nextjs to align it with other projects, there were no code changes.
+
+## v3.14.0 (2026-02-12)
+
+This was a version bump only for @novu/nextjs to align it with other projects, there were no code changes.
+
+## v3.13.0 (2026-01-28)
+
+This was a version bump only for @novu/nextjs to align it with other projects, there were no code changes.
+
+## v3.12.0 (2026-01-07)
+
+This was a version bump only for @novu/nextjs to align it with other projects, there were no code changes.
+
+## v3.11.2 (2025-12-24)
+
+### 🚀 Features
+
+- **root:** new npm trusted publisher flow ([#9715](https://github.com/novuhq/novu/pull/9715))
+- **react,nextjs:** subscription hooks fixes NV-6864 ([#9530](https://github.com/novuhq/novu/pull/9530))
+- **js,react,nextjs:** subscription button and preferences standalone components fixes NV-6909 ([#9527](https://github.com/novuhq/novu/pull/9527))
+- **js,react,nextjs:** subscription component fixes NV-6863 ([#9512](https://github.com/novuhq/novu/pull/9512))
+
+### 🩹 Fixes
+
+- **root:** use latest npm to able to use npm trusted publishing ([#9716](https://github.com/novuhq/novu/pull/9716))
+
+### ❤️ Thank You
+
+- Himanshu Garg @merrcury
+- Paweł Tymczuk @LetItRock
+
+## v3.11.0 (2025-10-27)
+
+### 🚀 Features
+
+- **js,react,api:** context HMAC & Inbox dynamic session change fixes NV-6793 ([#9365](https://github.com/novuhq/novu/pull/9365))
+
+### ❤️ Thank You
+
+- Adam Chmara @ChmaraX
+
+## v3.10.1 (2025-09-22)
+
+This was a version bump only for @novu/nextjs to align it with other projects, there were no code changes.
+
+## v3.10.0 (2025-09-22)
+
+### 🚀 Features
+
+- **react,js:** default schedule and useSchedule hook fixes NV-6616 ([#9110](https://github.com/novuhq/novu/pull/9110))
+
+### ❤️ Thank You
+
+- Paweł Tymczuk @LetItRock
+
+## v3.9.3 (2025-09-03)
+
+This was a version bump only for @novu/nextjs to align it with other projects, there were no code changes.
+
+## v3.9.2 (2025-09-03)
+
+### 🚀 Features
+
+- **js,react,api-service:** inbox allow filtering preferences by workflow criticality fixes NV-6577 ([#9011](https://github.com/novuhq/novu/pull/9011))
+
+### ❤️ Thank You
+
+- Paweł Tymczuk @LetItRock
+
+## v3.9.1 (2025-08-27)
+
+### 🚀 Features
+
+- **js,react,nextjs:** inbox appearance keys as a callback with the context prop fixes NV-6447 ([#8983](https://github.com/novuhq/novu/pull/8983))
+- **js,react,api-service,ws:** support severity in inbox components and hooks fixes NV-6470 ([#8913](https://github.com/novuhq/novu/pull/8913))
+
+### ❤️ Thank You
+
+- Paweł Tymczuk @LetItRock
+
+## v3.8.1 (2025-08-13)
+
+### 🩹 Fixes
+
+- **root:** nx release publish issue for syntax error fixes NV-6506 ([#8922](https://github.com/novuhq/novu/pull/8922))
+
+### ❤️ Thank You
+
+- Himanshu Garg @merrcury
+
+## v3.7.0 (2025-07-22)
+
+### 🚀 Features
+
+- **worker,js,react:** subscriber timezone aware delivery fixes NV-6239 ([#8674](https://github.com/novuhq/novu/pull/8674))
+- **root:** create keyless environment ([#8276](https://github.com/novuhq/novu/pull/8276))
+
+### 🩹 Fixes
+
+- **root:** bring back eslint and web app build ([#8505](https://github.com/novuhq/novu/pull/8505))
+- version bump react packages ([62ff7ee154](https://github.com/novuhq/novu/commit/62ff7ee154))
+- novu react rc 4 release ([b737df7335](https://github.com/novuhq/novu/commit/b737df7335))
+
+### ❤️ Thank You
+
+- Dima Grossman @scopsy
+- George Djabarov @djabarovgeorge
+- Paweł Tymczuk @LetItRock
+
 ## v3.4.0 (2025-05-16)
 
 ### 🧱 Updated Dependencies

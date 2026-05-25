@@ -1,4 +1,4 @@
-import { type Page, expect } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 export class StepConfigSidebar {
   constructor(private page: Page) {}
@@ -51,7 +51,7 @@ export class StepConfigSidebar {
   }
 
   async setRegularDigestAmountInputValue(value: string): Promise<void> {
-    const regularDigestAmountInput = this.page.getByTestId('regular-digest-amount-input');
+    const regularDigestAmountInput = this.page.getByTestId('regular-type-amount-input');
     await regularDigestAmountInput.fill(value);
     await regularDigestAmountInput.press('Tab');
   }

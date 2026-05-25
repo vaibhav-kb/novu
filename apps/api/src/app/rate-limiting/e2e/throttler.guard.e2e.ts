@@ -1,7 +1,7 @@
-import { ApiRateLimitCategoryEnum, ApiRateLimitCostEnum, ApiServiceLevelEnum } from '@novu/shared';
-import { expect } from 'chai';
 import { HttpResponseHeaderKeysEnum } from '@novu/application-generic';
+import { ApiRateLimitCategoryEnum, ApiRateLimitCostEnum, ApiServiceLevelEnum } from '@novu/shared';
 import { UserSession } from '@novu/testing';
+import { expect } from 'chai';
 
 const mockSingleCost = 1;
 const mockBulkCost = 5;
@@ -22,12 +22,12 @@ process.env.API_RATE_LIMIT_MAXIMUM_UNLIMITED_TRIGGER = `${mockMaximumUnlimitedTr
 process.env.API_RATE_LIMIT_MAXIMUM_UNLIMITED_GLOBAL = `${mockMaximumUnlimitedGlobal}`;
 
 // Disable Launch Darkly to allow test to define FF state
-// @ts-ignore
-process.env.LAUNCH_DARKLY_SDK_KEY = '';
+(process.env as Record<string, string>).LAUNCH_DARKLY_SDK_KEY = '';
 
 describe('API Rate Limiting #novu-v2', () => {
   let session: UserSession;
   const pathPrefix = '/v1/rate-limiting';
+
   let request: (
     path: string,
     authHeader?: string
@@ -35,8 +35,7 @@ describe('API Rate Limiting #novu-v2', () => {
 
   describe('Guard logic', () => {
     beforeEach(async () => {
-      // @ts-ignore
-      process.env.IS_API_RATE_LIMITING_ENABLED = 'true';
+      (process.env as Record<string, string>).IS_API_RATE_LIMITING_ENABLED = 'true';
 
       session = new UserSession();
       await session.initialize();
@@ -48,16 +47,14 @@ describe('API Rate Limiting #novu-v2', () => {
 
     describe('Feature Flag', () => {
       it('should set rate limit headers when the Feature Flag is enabled', async () => {
-        // @ts-ignore
-        process.env.IS_API_RATE_LIMITING_ENABLED = 'true';
+        (process.env as Record<string, string>).IS_API_RATE_LIMITING_ENABLED = 'true';
         const response = await request(`${pathPrefix}/no-category-no-cost`);
 
         expect(response.headers[HttpResponseHeaderKeysEnum.RATELIMIT_LIMIT.toLowerCase()]).to.exist;
       });
 
       it('should NOT set rate limit headers when the Feature Flag is disabled', async () => {
-        // @ts-ignore
-        process.env.IS_API_RATE_LIMITING_ENABLED = 'false';
+        (process.env as Record<string, string>).IS_API_RATE_LIMITING_ENABLED = 'false';
         const response = await request(`${pathPrefix}/no-category-no-cost`);
 
         expect(response.headers[HttpResponseHeaderKeysEnum.RATELIMIT_LIMIT.toLowerCase()]).not.to.exist;
@@ -275,8 +272,7 @@ describe('API Rate Limiting #novu-v2', () => {
               const expectedRemaining = Math.max(0, expectedBurstLimit - expectedCost);
 
               before(async () => {
-                // @ts-ignore
-                process.env.IS_API_RATE_LIMITING_ENABLED = 'true';
+                (process.env as Record<string, string>).IS_API_RATE_LIMITING_ENABLED = 'true';
 
                 session = new UserSession();
                 await session.initialize();
@@ -337,6 +333,8 @@ describe('API Rate Limiting #novu-v2', () => {
           };
         }
       )
-      .forEach((testCase) => testCase());
+      .forEach((testCase) => {
+        testCase();
+      });
   });
 });

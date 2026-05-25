@@ -1,9 +1,9 @@
-import React from 'react';
-import { createContextHook } from '../context';
-import { useQuery } from '@tanstack/react-query';
-import { get } from '../../api/api.client';
 import { IOrganizationEntity } from '@novu/shared';
+import { useQuery } from '@tanstack/react-query';
+import React from 'react';
+import { get } from '../../api/api.client';
 import { QueryKeys } from '../../utils/query-keys';
+import { createContextHook } from '../context';
 import { withJwtValidation } from './api-interceptor';
 import { getJwtToken } from './jwt-manager';
 
@@ -15,12 +15,12 @@ const getCurrentOrganization = withJwtValidation(async () => {
   return response.data;
 });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function OrganizationContextProvider({ children }: any) {
+  const hasToken = !!getJwtToken();
   const { data: organization, isLoading } = useQuery({
     queryKey: [QueryKeys.myOrganization],
     queryFn: getCurrentOrganization,
-    enabled: !!getJwtToken(),
+    enabled: hasToken,
   });
 
   const value = {
@@ -35,21 +35,11 @@ export function OrganizationContextProvider({ children }: any) {
           },
           _id: organization._id,
         }
-      : {
-          name: 'System Organization',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          externalOrgId: null,
-          publicMetadata: {
-            externalOrgId: null,
-          },
-          _id: null,
-        },
-    isLoaded: isLoading,
+      : undefined,
+    isLoaded: hasToken ? !isLoading : true,
   };
 
   return <OrganizationContext.Provider value={value}>{children}</OrganizationContext.Provider>;
 }
 
-// eslint-disable-next-line react-refresh/only-export-components
 export const useOrganization = createContextHook(OrganizationContext);

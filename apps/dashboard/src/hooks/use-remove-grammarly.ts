@@ -1,9 +1,9 @@
-import { useRef, useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 
 import { useMutationObserver } from './use-mutation-observer';
 
 export function useRemoveGrammarly<T extends HTMLElement>() {
-  const target = useRef<T>(null);
+  const target = useRef<T | null>(null);
   const handleGrammarlyRemoval = useCallback((mutations: MutationRecord[]) => {
     for (const mutation of mutations) {
       if (mutation.type === 'childList') {

@@ -1,7 +1,9 @@
-import { Navigate, useLocation } from 'react-router-dom';
+import { FeatureFlagsKeysEnum } from '@novu/shared';
 import { RiLoader4Line } from 'react-icons/ri';
+import { Navigate, useLocation } from 'react-router-dom';
 import { buildRoute, ROUTES } from '@/utils/routes';
 import { useEnvironment } from '../context/environment/hooks';
+import { useFeatureFlag } from '../hooks/use-feature-flag';
 
 export const CatchAllRoute = () => {
   const { currentEnvironment, areEnvironmentsInitialLoading } = useEnvironment();
@@ -24,7 +26,8 @@ export const CatchAllRoute = () => {
   }
 
   const routeEntries = Object.entries(ROUTES);
-  for (const [key, routePath] of routeEntries) {
+
+  for (const [, routePath] of routeEntries) {
     if (
       typeof routePath === 'string' &&
       routePath.includes(':environmentSlug') &&
@@ -32,6 +35,7 @@ export const CatchAllRoute = () => {
       !routePath.includes('/', '/env/:environmentSlug/'.length)
     ) {
       const routeName = routePath.replace('/env/:environmentSlug/', '');
+
       if (path === routeName) {
         const targetPath = buildRoute(routePath, { environmentSlug: currentEnvironment.slug });
         return <Navigate to={`${targetPath}${location.search}${location.hash}`} />;
@@ -43,7 +47,9 @@ export const CatchAllRoute = () => {
     <Navigate
       to={
         currentEnvironment?.slug
-          ? buildRoute(ROUTES.WORKFLOWS, { environmentSlug: currentEnvironment.slug })
+          ? buildRoute(ROUTES.WORKFLOWS, {
+              environmentSlug: currentEnvironment.slug,
+            })
           : ROUTES.ENV
       }
     />

@@ -1,10 +1,9 @@
 import { Injectable } from '@nestjs/common';
 
-import { InstrumentUsecase } from '@novu/application-generic';
+import { InstrumentUsecase, toWorkflowsMinifiedDtos } from '@novu/application-generic';
 import { NotificationTemplateRepository } from '@novu/dal';
-import { toWorkflowsMinifiedDtos } from '../../mappers/notification-template-mapper';
-import { ListWorkflowsCommand } from './list-workflows.command';
 import { ListWorkflowResponse } from '../../dtos';
+import { ListWorkflowsCommand } from './list-workflows.command';
 
 @Injectable()
 export class ListWorkflowsUseCase {

@@ -1,12 +1,28 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import {
+  emailControlSchema,
+  evaluateRules,
+  FeatureFlagsService,
+  InMemoryLRUCacheService,
+  InMemoryLRUCacheStore,
+  Instrument,
+  InstrumentUsecase,
+  isMatchingJsonSchema,
+  PinoLogger,
+} from '@novu/application-generic';
+import {
+  CommunityOrganizationRepository,
+  EnvironmentRepository,
+  NotificationStepEntity,
+  NotificationTemplateEntity,
+  NotificationTemplateRepository,
+  OrganizationEntity,
+} from '@novu/dal';
 import { workflow } from '@novu/framework/express';
-import { ActionStep, ChannelStep, Schema, Step, StepOutput, Workflow } from '@novu/framework/internal';
-import { NotificationStepEntity, NotificationTemplateEntity, NotificationTemplateRepository } from '@novu/dal';
-import { StepTypeEnum } from '@novu/shared';
-import { Instrument, InstrumentUsecase, PinoLogger } from '@novu/application-generic';
+import { ActionStep, ChannelStep, PostActionEnum, Schema, Step, StepOutput, Workflow } from '@novu/framework/internal';
+import { EnvironmentTypeEnum, LAYOUT_PREVIEW_EMAIL_STEP, LAYOUT_PREVIEW_WORKFLOW_ID, StepTypeEnum } from '@novu/shared';
 import { AdditionalOperation, RulesLogic } from 'json-logic-js';
 import _ from 'lodash';
-import { ConstructFrameworkWorkflowCommand } from './construct-framework-workflow.command';
 import {
   ChatOutputRendererUsecase,
   EmailOutputRendererUsecase,
@@ -17,8 +33,8 @@ import {
 } from '../output-renderers';
 import { DelayOutputRendererUsecase } from '../output-renderers/delay-output-renderer.usecase';
 import { DigestOutputRendererUsecase } from '../output-renderers/digest-output-renderer.usecase';
-import { evaluateRules } from '../../../shared/services/query-parser/query-parser.service';
-import { isMatchingJsonSchema } from '../../../workflows-v2/util/jsonToSchema';
+import { ThrottleOutputRendererUsecase } from '../output-renderers/throttle-output-renderer.usecase';
+import { ConstructFrameworkWorkflowCommand } from './construct-framework-workflow.command';
 
 const LOG_CONTEXT = 'ConstructFrameworkWorkflow';
 
@@ -27,45 +43,131 @@ export class ConstructFrameworkWorkflow {
   constructor(
     private logger: PinoLogger,
     private workflowsRepository: NotificationTemplateRepository,
+    private environmentRepository: EnvironmentRepository,
+    private communityOrganizationRepository: CommunityOrganizationRepository,
     private inAppOutputRendererUseCase: InAppOutputRendererUsecase,
     private emailOutputRendererUseCase: EmailOutputRendererUsecase,
     private smsOutputRendererUseCase: SmsOutputRendererUsecase,
     private chatOutputRendererUseCase: ChatOutputRendererUsecase,
     private pushOutputRendererUseCase: PushOutputRendererUsecase,
     private delayOutputRendererUseCase: DelayOutputRendererUsecase,
-    private digestOutputRendererUseCase: DigestOutputRendererUsecase
-  ) {}
+    private digestOutputRendererUseCase: DigestOutputRendererUsecase,
+    private throttleOutputRendererUseCase: ThrottleOutputRendererUsecase,
+    private featureFlagsService: FeatureFlagsService,
+    private inMemoryLRUCacheService: InMemoryLRUCacheService
+  ) {
+    this.logger.setContext(this.constructor.name);
+  }
 
   @InstrumentUsecase()
   async execute(command: ConstructFrameworkWorkflowCommand): Promise<Workflow> {
-    const dbWorkflow = await this.getDbWorkflow(command.environmentId, command.workflowId);
+    if (command.workflowId === LAYOUT_PREVIEW_WORKFLOW_ID) {
+      return this.constructLayoutPreviewWorkflow(command);
+    }
+
+    const shouldUseCache =
+      command.action === PostActionEnum.EXECUTE && command.environmentType !== EnvironmentTypeEnum.DEV;
+
+    const dbWorkflow = await this.getWorkflow(command.environmentId, command.workflowId, shouldUseCache);
+
     if (command.controlValues) {
       for (const step of dbWorkflow.steps) {
         step.controlVariables = command.controlValues;
       }
     }
 
-    return this.constructFrameworkWorkflow(dbWorkflow);
+    const organization = await this.getOrganization(dbWorkflow._organizationId, shouldUseCache, command.environmentId);
+
+    return this.constructFrameworkWorkflow({
+      dbWorkflow,
+      organization,
+      skipLayoutRendering: command.skipLayoutRendering,
+      jobId: command.jobId,
+    });
+  }
+
+  private async constructLayoutPreviewWorkflow(command: ConstructFrameworkWorkflowCommand): Promise<Workflow> {
+    const environment = await this.environmentRepository.findOne({ _id: command.environmentId }, '_organizationId');
+    if (!environment) {
+      throw new InternalServerErrorException(`Environment ${command.environmentId} not found`);
+    }
+
+    const organization =
+      (await this.communityOrganizationRepository.findById(environment._organizationId)) || undefined;
+
+    const syntheticDbWorkflow: NotificationTemplateEntity = {
+      _id: LAYOUT_PREVIEW_WORKFLOW_ID,
+      _environmentId: command.environmentId,
+      _organizationId: environment._organizationId,
+      _creatorId: environment._organizationId,
+    } as NotificationTemplateEntity;
+
+    return workflow(LAYOUT_PREVIEW_WORKFLOW_ID, async ({ step, payload, subscriber, context, env }) => {
+      await step.email(
+        LAYOUT_PREVIEW_EMAIL_STEP,
+        async (controlValues) => {
+          return this.emailOutputRendererUseCase.execute({
+            controlValues,
+            fullPayloadForRender: { payload, subscriber, context, steps: {}, env },
+            dbWorkflow: syntheticDbWorkflow,
+            organization,
+            locale: subscriber.locale ?? undefined,
+            stepId: LAYOUT_PREVIEW_EMAIL_STEP,
+            layoutId: command.layoutId,
+          });
+        },
+        {
+          skip: () => false,
+          controlSchema: emailControlSchema as unknown as Schema,
+          disableOutputSanitization: true,
+          providers: {},
+        }
+      );
+    });
   }
 
   @Instrument()
-  private constructFrameworkWorkflow(dbWorkflow: NotificationTemplateEntity): Workflow {
+  private constructFrameworkWorkflow({
+    dbWorkflow,
+    organization,
+    skipLayoutRendering,
+    jobId,
+  }: {
+    dbWorkflow: NotificationTemplateEntity;
+    organization?: OrganizationEntity;
+    skipLayoutRendering?: boolean;
+    jobId?: string;
+  }): Workflow {
     return workflow(
       dbWorkflow.triggers[0].identifier,
-      async ({ step, payload, subscriber }) => {
-        const fullPayloadForRender: FullPayloadForRender = { payload, subscriber, steps: {} };
+      async ({ step, payload, subscriber, context, env }) => {
+        const fullPayloadForRender: FullPayloadForRender = {
+          workflow: dbWorkflow as unknown as Record<string, unknown>,
+          payload,
+          subscriber,
+          context,
+          steps: {},
+          env,
+        };
         for (const staticStep of dbWorkflow.steps) {
-          fullPayloadForRender.steps[staticStep.stepId || staticStep._templateId] = await this.constructStep(
+          fullPayloadForRender.steps[staticStep.stepId || staticStep._templateId] = await this.constructStep({
             step,
             staticStep,
             fullPayloadForRender,
-            dbWorkflow._environmentId,
-            dbWorkflow._organizationId
-          );
+            dbWorkflow,
+            organization,
+            locale: subscriber.locale ?? undefined,
+            skipLayoutRendering,
+            jobId,
+          });
         }
       },
       {
         payloadSchema: PERMISSIVE_EMPTY_SCHEMA,
+        name: dbWorkflow.name,
+        description: dbWorkflow.description,
+        tags: dbWorkflow.tags,
+        severity: dbWorkflow.severity,
 
         /*
          * TODO: Workflow options are not needed currently, given that this endpoint
@@ -80,28 +182,50 @@ export class ConstructFrameworkWorkflow {
   }
 
   @Instrument()
-  private constructStep(
-    step: Step,
-    staticStep: NotificationStepEntity,
-    fullPayloadForRender: FullPayloadForRender,
-    environmentId: string,
-    organizationId: string
-  ): StepOutput<Record<string, unknown>> {
+  private constructStep({
+    step,
+    staticStep,
+    fullPayloadForRender,
+    dbWorkflow,
+    organization,
+    locale,
+    skipLayoutRendering,
+    jobId,
+  }: {
+    step: Step;
+    staticStep: NotificationStepEntity;
+    fullPayloadForRender: FullPayloadForRender;
+    dbWorkflow: NotificationTemplateEntity;
+    organization?: OrganizationEntity;
+    locale?: string;
+    skipLayoutRendering?: boolean;
+    jobId?: string;
+  }): StepOutput<Record<string, unknown>> {
     const stepTemplate = staticStep.template;
 
     if (!stepTemplate) {
-      throw new InternalServerErrorException(`Step template not found for step ${staticStep.stepId}`);
+      this.logger.warn(`Step template not found for step ${staticStep.stepId}, skipping step`, LOG_CONTEXT);
+
+      return step.custom(staticStep.stepId || staticStep._templateId, async () => ({}), {
+        controlSchema: PERMISSIVE_EMPTY_SCHEMA,
+        skip: () => true,
+      });
     }
 
     const stepType = stepTemplate.type;
-    const { stepId } = staticStep;
+    const stepId = staticStep.stepId || staticStep._templateId;
     if (!stepId) {
-      throw new InternalServerErrorException(`Step id not found for step ${staticStep.stepId}`);
+      throw new InternalServerErrorException(`Step id not found for step ${staticStep._id}`);
     }
     const stepControls = stepTemplate.controls;
 
     if (!stepControls) {
-      throw new InternalServerErrorException(`Step controls not found for step ${staticStep.stepId}`);
+      this.logger.warn(`Step controls not found for step ${stepId}, skipping step`, LOG_CONTEXT);
+
+      return step.custom(stepId, async () => ({}), {
+        controlSchema: PERMISSIVE_EMPTY_SCHEMA,
+        skip: () => true,
+      });
     }
 
     switch (stepType) {
@@ -111,7 +235,13 @@ export class ConstructFrameworkWorkflow {
           stepId,
           // The step callback function. Takes controls and returns the step outputs
           async (controlValues) => {
-            return this.inAppOutputRendererUseCase.execute({ controlValues, fullPayloadForRender });
+            return this.inAppOutputRendererUseCase.execute({
+              controlValues,
+              fullPayloadForRender,
+              dbWorkflow,
+              organization,
+              locale,
+            });
           },
           // Step options
           this.constructChannelStepOptions(staticStep, fullPayloadForRender)
@@ -123,8 +253,12 @@ export class ConstructFrameworkWorkflow {
             return this.emailOutputRendererUseCase.execute({
               controlValues,
               fullPayloadForRender,
-              environmentId,
-              organizationId,
+              dbWorkflow,
+              organization,
+              locale,
+              skipLayoutRendering,
+              jobId,
+              stepId,
             });
           },
           this.constructChannelStepOptions(staticStep, fullPayloadForRender)
@@ -133,7 +267,13 @@ export class ConstructFrameworkWorkflow {
         return step.sms(
           stepId,
           async (controlValues) => {
-            return this.smsOutputRendererUseCase.execute({ controlValues, fullPayloadForRender });
+            return this.smsOutputRendererUseCase.execute({
+              controlValues,
+              fullPayloadForRender,
+              dbWorkflow,
+              organization,
+              locale,
+            });
           },
           this.constructChannelStepOptions(staticStep, fullPayloadForRender)
         );
@@ -141,7 +281,13 @@ export class ConstructFrameworkWorkflow {
         return step.chat(
           stepId,
           async (controlValues) => {
-            return this.chatOutputRendererUseCase.execute({ controlValues, fullPayloadForRender });
+            return this.chatOutputRendererUseCase.execute({
+              controlValues,
+              fullPayloadForRender,
+              dbWorkflow,
+              organization,
+              locale,
+            });
           },
           this.constructChannelStepOptions(staticStep, fullPayloadForRender)
         );
@@ -149,7 +295,13 @@ export class ConstructFrameworkWorkflow {
         return step.push(
           stepId,
           async (controlValues) => {
-            return this.pushOutputRendererUseCase.execute({ controlValues, fullPayloadForRender });
+            return this.pushOutputRendererUseCase.execute({
+              controlValues,
+              fullPayloadForRender,
+              dbWorkflow,
+              organization,
+              locale,
+            });
           },
           this.constructChannelStepOptions(staticStep, fullPayloadForRender)
         );
@@ -166,6 +318,36 @@ export class ConstructFrameworkWorkflow {
           stepId,
           async (controlValues) => {
             return this.delayOutputRendererUseCase.execute({ controlValues, fullPayloadForRender });
+          },
+          this.constructActionStepOptions(staticStep, fullPayloadForRender)
+        );
+      case StepTypeEnum.THROTTLE:
+        return step.throttle(
+          stepId,
+          async (controlValues) => {
+            return this.throttleOutputRendererUseCase.execute({ controlValues, fullPayloadForRender });
+          },
+          this.constructActionStepOptions(staticStep, fullPayloadForRender)
+        );
+      /*
+       * Custom steps are executed by the worker, bypassing the bridge entirely. However, when a subsequent
+       * step triggers a bridge call, the framework reconstructs the full workflow from the DB and iterates
+       * over every step — including these. We must register each such step here so the framework can build
+       * the workflow graph correctly. The resolve function is a passthrough because execution already happened.
+       */
+      case StepTypeEnum.HTTP_REQUEST:
+        return step.custom(
+          stepId,
+          async (controlValues) => {
+            return controlValues;
+          },
+          this.constructActionStepOptions(staticStep, fullPayloadForRender)
+        );
+      case StepTypeEnum.CUSTOM:
+        return step.custom(
+          stepId,
+          async (controlValues) => {
+            return controlValues;
           },
           this.constructActionStepOptions(staticStep, fullPayloadForRender)
         );
@@ -222,14 +404,57 @@ export class ConstructFrameworkWorkflow {
   }
 
   @Instrument()
-  private async getDbWorkflow(environmentId: string, workflowId: string): Promise<NotificationTemplateEntity> {
-    const foundWorkflow = await this.workflowsRepository.findByTriggerIdentifier(environmentId, workflowId);
+  private async getWorkflow(
+    environmentId: string,
+    workflowId: string,
+    shouldUseCache: boolean
+  ): Promise<NotificationTemplateEntity> {
+    const workflow = await this.inMemoryLRUCacheService.get(
+      InMemoryLRUCacheStore.WORKFLOW,
+      `${environmentId}:${workflowId}`,
+      async () => {
+        const foundWorkflow = await this.workflowsRepository.findByTriggerIdentifier(
+          environmentId,
+          workflowId,
+          null,
+          false
+        );
+        if (!foundWorkflow) {
+          throw new InternalServerErrorException(`Workflow ${workflowId} not found`);
+        }
 
-    if (!foundWorkflow) {
+        return foundWorkflow;
+      },
+      {
+        environmentId,
+        skipCache: !shouldUseCache,
+      }
+    );
+
+    if (!workflow) {
       throw new InternalServerErrorException(`Workflow ${workflowId} not found`);
     }
 
-    return foundWorkflow;
+    return workflow;
+  }
+
+  private async getOrganization(
+    organizationId: string,
+    shouldUseCache: boolean,
+    environmentId: string
+  ): Promise<OrganizationEntity | undefined> {
+    const organization = await this.inMemoryLRUCacheService.get(
+      InMemoryLRUCacheStore.ORGANIZATION,
+      organizationId,
+      () => this.communityOrganizationRepository.findById(organizationId),
+      {
+        environmentId,
+        organizationId,
+        skipCache: !shouldUseCache,
+      }
+    );
+
+    return organization || undefined;
   }
 
   private async processSkipOption(
@@ -242,7 +467,13 @@ export class ConstructFrameworkWorkflow {
       return false;
     }
 
-    const { result, error } = evaluateRules(skipRules, variables);
+    const { result, error } = evaluateRules(skipRules, {
+      ...variables,
+      subscriber: {
+        ...variables.subscriber,
+        isOnline: variables.subscriber.isOnline ?? false,
+      },
+    });
 
     if (error) {
       this.logger.error({ err: error }, 'Failed to evaluate skip rule', LOG_CONTEXT);

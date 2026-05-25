@@ -1,8 +1,8 @@
-import { addSubscribersToTopic, getTopicSubscriptions, removeSubscribersFromTopic } from '@/api/topics';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { NovuApiError } from '@/api/api.client';
+import { addSubscribersToTopic, getTopicSubscriptions, removeSubscribersFromTopic } from '@/api/topics';
 import { showErrorToast, showSuccessToast } from '@/components/primitives/sonner-helpers';
 import { useEnvironment } from '@/context/environment/hooks';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 export function useTopicSubscriptions(
   topicKey: string,
@@ -11,17 +11,24 @@ export function useTopicSubscriptions(
     after,
     before,
     subscriberId,
+    contextKeys,
   }: {
     limit?: number;
     after?: string;
     before?: string;
     subscriberId?: string;
+    contextKeys?: string[];
   } = {}
 ) {
   const { currentEnvironment } = useEnvironment();
 
   return useQuery({
-    queryKey: ['topic-subscriptions', currentEnvironment?._id, topicKey, { limit, after, before, subscriberId }],
+    queryKey: [
+      'topic-subscriptions',
+      currentEnvironment?._id,
+      topicKey,
+      { limit, after, before, subscriberId, contextKeys },
+    ],
     queryFn: async () => {
       if (!currentEnvironment) {
         throw new Error('Environment not found');
@@ -34,6 +41,7 @@ export function useTopicSubscriptions(
         after,
         before,
         subscriberId,
+        contextKeys,
       });
     },
     retry: false,
@@ -47,7 +55,15 @@ export function useAddTopicSubscribers() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ topicKey, subscribers }: { topicKey: string; subscribers: string[] }) => {
+    mutationFn: ({
+      topicKey,
+      subscribers,
+      contextKeys,
+    }: {
+      topicKey: string;
+      subscribers: string[];
+      contextKeys?: string[];
+    }) => {
       if (!currentEnvironment) {
         throw new Error('Environment not found');
       }
@@ -56,6 +72,7 @@ export function useAddTopicSubscribers() {
         environment: currentEnvironment,
         topicKey,
         subscribers,
+        contextKeys,
       });
     },
     onSuccess: (_, variables) => {

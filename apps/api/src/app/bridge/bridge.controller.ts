@@ -13,37 +13,37 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-
+import { ApiExcludeController } from '@nestjs/swagger';
+import {
+  AnalyticsService,
+  assertSafeOutboundUrl,
+  ExternalApiAccessible,
+  PreviewStep,
+  PreviewStepCommand,
+  RequirePermissions,
+  SkipPermissionsCheck,
+  SsrfBlockedError,
+  UserSession,
+} from '@novu/application-generic';
+import { ControlValuesRepository, EnvironmentRepository, NotificationTemplateRepository } from '@novu/dal';
 import { HttpHeaderKeysEnum } from '@novu/framework/internal';
 import {
   ControlValuesLevelEnum,
-  UserSessionData,
-  WorkflowOriginEnum,
-  WorkflowTypeEnum,
   PermissionsEnum,
+  ResourceOriginEnum,
+  ResourceTypeEnum,
+  UserSessionData,
 } from '@novu/shared';
-import {
-  AnalyticsService,
-  ExternalApiAccessible,
-  UserSession,
-  RequirePermissions,
-  SkipPermissionsCheck,
-} from '@novu/application-generic';
-import { ControlValuesRepository, EnvironmentRepository, NotificationTemplateRepository } from '@novu/dal';
-
-import { ApiExcludeController } from '@nestjs/swagger';
-
-import { StoreControlValuesCommand, StoreControlValuesUseCase } from './usecases/store-control-values';
-import { PreviewStep, PreviewStepCommand } from './usecases/preview-step';
-import { SyncCommand } from './usecases/sync';
-import { Sync } from './usecases/sync/sync.usecase';
-import { ValidateBridgeUrlRequestDto } from './dtos/validate-bridge-url-request.dto';
-import { ValidateBridgeUrlResponseDto } from './dtos/validate-bridge-url-response.dto';
-import { GetBridgeStatus } from './usecases/get-bridge-status/get-bridge-status.usecase';
-import { GetBridgeStatusCommand } from './usecases/get-bridge-status/get-bridge-status.command';
+import { RequireAuthentication } from '../auth/framework/auth.decorator';
 import { CreateBridgeRequestDto } from './dtos/create-bridge-request.dto';
 import { CreateBridgeResponseDto } from './dtos/create-bridge-response.dto';
-import { RequireAuthentication } from '../auth/framework/auth.decorator';
+import { ValidateBridgeUrlRequestDto } from './dtos/validate-bridge-url-request.dto';
+import { ValidateBridgeUrlResponseDto } from './dtos/validate-bridge-url-response.dto';
+import { GetBridgeStatusCommand } from './usecases/get-bridge-status/get-bridge-status.command';
+import { GetBridgeStatus } from './usecases/get-bridge-status/get-bridge-status.usecase';
+import { StoreControlValuesCommand, StoreControlValuesUseCase } from './usecases/store-control-values';
+import { SyncCommand } from './usecases/sync';
+import { Sync } from './usecases/sync/sync.usecase';
 
 @Controller('/bridge')
 @UseInterceptors(ClassSerializerInterceptor)
@@ -83,12 +83,12 @@ export class BridgeController {
       PreviewStepCommand.create({
         workflowId,
         stepId,
-        controls: data.controls,
-        payload: data.payload,
+        controls: data?.controls,
+        payload: data?.payload,
         environmentId: user.environmentId,
         organizationId: user.organizationId,
         userId: user._id,
-        workflowOrigin: WorkflowOriginEnum.EXTERNAL,
+        workflowOrigin: ResourceOriginEnum.EXTERNAL,
       })
     );
   }
@@ -145,7 +145,7 @@ export class BridgeController {
     const templates = await this.notificationTemplateRepository.find({
       _environmentId: user.environmentId,
       type: {
-        $in: [WorkflowTypeEnum.ECHO, WorkflowTypeEnum.BRIDGE],
+        $in: [ResourceTypeEnum.ECHO, ResourceTypeEnum.BRIDGE],
       },
     });
 
@@ -170,7 +170,9 @@ export class BridgeController {
   ) {
     const workflowExist = await this.notificationTemplateRepository.findByTriggerIdentifier(
       user.environmentId,
-      workflowId
+      workflowId,
+      undefined,
+      false
     );
     if (!workflowExist) {
       throw new NotFoundException('Workflow not found');
@@ -205,7 +207,7 @@ export class BridgeController {
       StoreControlValuesCommand.create({
         stepId,
         workflowId,
-        controlValues: body.variables,
+        controlValues: body?.variables,
         environmentId: user.environmentId,
         organizationId: user.organizationId,
         userId: user._id,
@@ -220,11 +222,27 @@ export class BridgeController {
     @UserSession() user: UserSessionData,
     @Body() body: ValidateBridgeUrlRequestDto
   ): Promise<ValidateBridgeUrlResponseDto> {
+    // Reject SSRF candidates (loopback, link-local, cloud metadata, non-http
+    // schemes, embedded credentials) before issuing the outbound health-check.
+    // The endpoint is gated by BRIDGE_WRITE, but an authenticated operator can
+    // otherwise probe internal hosts via the API process.
+    try {
+      assertSafeOutboundUrl(body.bridgeUrl);
+    } catch (err) {
+      if (err instanceof SsrfBlockedError) {
+        return { isValid: false, error: err.message };
+      }
+      throw err;
+    }
+
     try {
       const result = await this.getBridgeStatus.execute(
         GetBridgeStatusCommand.create({
           environmentId: user.environmentId,
           statelessBridgeUrl: body.bridgeUrl,
+          // User-supplied bridgeUrl: enforce DNS-pinned SSRF guard at connect
+          // time so IP-literal private addresses cannot reach internal hosts.
+          enforceSsrfProtection: true,
         })
       );
 

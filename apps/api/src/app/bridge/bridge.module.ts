@@ -1,11 +1,13 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import {
+  BuildStepIssuesUsecase,
+  BuildVariableSchemaUsecase,
   CreateChange,
   CreateMessageTemplate,
-  CreateWorkflow,
+  CreateVariablesObject,
+  CreateWorkflowV0,
   DeleteMessageTemplate,
   DeletePreferencesUseCase,
-  DeleteWorkflowUseCase,
   GetPreferences,
   GetWorkflowByIdsUseCase,
   GetWorkflowWithPreferencesUseCase,
@@ -13,22 +15,20 @@ import {
   TierRestrictionsValidateUsecase,
   UpdateChange,
   UpdateMessageTemplate,
-  UpdateWorkflow,
+  UpdateWorkflowV0,
   UpsertControlValuesUseCase,
   UpsertPreferences,
 } from '@novu/application-generic';
 import { CommunityOrganizationRepository, PreferencesRepository } from '@novu/dal';
+import { OutboundWebhooksModule } from '../outbound-webhooks/outbound-webhooks.module';
 import { SharedModule } from '../shared/shared.module';
+import { DeleteWorkflowUseCase } from '../workflows-v1/usecases/delete-workflow/delete-workflow.usecase';
 import { BridgeController } from './bridge.controller';
 import { USECASES } from './usecases';
-import { BuildVariableSchemaUsecase } from '../workflows-v2/usecases';
-import { CreateVariablesObject } from '../workflows-v2/usecases/create-variables-object/create-variables-object.usecase';
-import { BuildStepIssuesUsecase } from '../workflows-v2/usecases/build-step-issues/build-step-issues.usecase';
-import { WebhooksModule } from '../webhooks/webhooks.module';
 
 const PROVIDERS = [
-  CreateWorkflow,
-  UpdateWorkflow,
+  CreateWorkflowV0,
+  UpdateWorkflowV0,
   GetWorkflowByIdsUseCase,
   GetWorkflowWithPreferencesUseCase,
   DeleteWorkflowUseCase,
@@ -51,11 +51,7 @@ const PROVIDERS = [
   TierRestrictionsValidateUsecase,
 ];
 
-const MODULES = [SharedModule];
-
-if (process.env.NOVU_ENTERPRISE === 'true') {
-  MODULES.push(WebhooksModule);
-}
+const MODULES = [SharedModule, OutboundWebhooksModule.forRoot()];
 
 @Module({
   imports: MODULES,

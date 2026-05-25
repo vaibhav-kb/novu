@@ -1,19 +1,20 @@
-import { useEffect, useRef, useCallback } from 'react';
-import { WorkflowResponseDto } from '@novu/shared';
+import { ContextPayload, WorkflowResponseDto } from '@novu/shared';
+import { useCallback, useEffect, useRef } from 'react';
+import { PayloadData, PreviewSubscriberData } from '../types/preview-context.types';
 import { parseJsonValue } from '../utils/preview-context.utils';
 import { mergePreviewContextData } from '../utils/preview-context-storage.utils';
-import { PayloadData, PreviewSubscriberData } from '../types/preview-context.types';
 
 type InitializationProps = {
   workflowId?: string;
   stepId?: string;
   environmentId?: string;
   value: string;
-  onChange: (value: string) => void;
+  onChange: (value: string) => unknown;
   workflow?: WorkflowResponseDto;
   isPayloadSchemaEnabled: boolean;
   loadPersistedPayload: () => PayloadData | null;
   loadPersistedSubscriber: () => PreviewSubscriberData | null;
+  loadPersistedContext: () => ContextPayload | null;
 };
 
 export function usePreviewDataInitialization({
@@ -26,6 +27,7 @@ export function usePreviewDataInitialization({
   isPayloadSchemaEnabled,
   loadPersistedPayload,
   loadPersistedSubscriber,
+  loadPersistedContext,
 }: InitializationProps) {
   const isInitializedRef = useRef(false);
   const lastValueRef = useRef(value);
@@ -51,11 +53,15 @@ export function usePreviewDataInitialization({
             payload: persistedPayload,
             subscriber: {},
             steps: {},
+            context: {},
+            env: {},
           },
           {
             payload: workflow.payloadExample as PayloadData,
             subscriber: {},
             steps: {},
+            context: {},
+            env: {},
           }
         );
         finalData.payload = mergedData.payload;
@@ -80,6 +86,14 @@ export function usePreviewDataInitialization({
         hasChanges = true;
       }
 
+      // Load and apply persisted context
+      const persistedContext = loadPersistedContext();
+
+      if (persistedContext) {
+        finalData.context = persistedContext;
+        hasChanges = true;
+      }
+
       // Update only if there are changes
       if (hasChanges) {
         const stringified = JSON.stringify(finalData, null, 2);
@@ -100,6 +114,7 @@ export function usePreviewDataInitialization({
     isPayloadSchemaEnabled,
     loadPersistedPayload,
     loadPersistedSubscriber,
+    loadPersistedContext,
     onChange,
   ]);
 

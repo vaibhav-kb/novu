@@ -1,12 +1,11 @@
-/* eslint-disable local-rules/no-class-without-style */
 import { JSX, ParentProps, Ref, splitProps } from 'solid-js';
 import { cn, useStyle } from '../../../helpers';
-import type { AppearanceKey } from '../../../types';
+import type { AllAppearanceKey } from '../../../types';
 
 export const tabsListVariants = () => 'nt-flex nt-gap-6';
 
 type TabsListProps = JSX.IntrinsicElements['div'] &
-  ParentProps & { class?: string; appearanceKey?: AppearanceKey; ref?: Ref<HTMLDivElement> };
+  ParentProps & { class?: string; appearanceKey?: AllAppearanceKey; ref?: Ref<HTMLDivElement> };
 
 export const TabsList = (props: TabsListProps) => {
   const [local, rest] = splitProps(props, ['class', 'appearanceKey', 'ref', 'children']);
@@ -16,7 +15,10 @@ export const TabsList = (props: TabsListProps) => {
     <>
       <div
         ref={local.ref}
-        class={style(local.appearanceKey || 'tabsList', cn(tabsListVariants(), local.class))}
+        class={style({
+          key: local.appearanceKey || 'tabsList',
+          className: cn(tabsListVariants(), local.class),
+        })}
         role="tablist"
         {...rest}
       >

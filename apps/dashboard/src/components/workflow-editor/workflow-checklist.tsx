@@ -1,10 +1,3 @@
-import { useEnvironment, useFetchEnvironments } from '@/context/environment/hooks';
-import { useFetchIntegrations } from '@/hooks/use-fetch-integrations';
-import { useTelemetry } from '@/hooks/use-telemetry';
-import { StepTypeEnum } from '@/utils/enums';
-import { buildRoute, ROUTES } from '@/utils/routes';
-import { TelemetryEvent } from '@/utils/telemetry';
-import { Step } from '@/utils/types';
 import { useUser } from '@clerk/clerk-react';
 import { ChannelTypeEnum, WorkflowResponseDto } from '@novu/shared';
 import { motion } from 'motion/react';
@@ -17,12 +10,18 @@ import {
   RiSparkling2Fill,
 } from 'react-icons/ri';
 import { useNavigate } from 'react-router-dom';
+import { useEnvironment, useFetchEnvironments } from '@/context/environment/hooks';
+import { useFeatureFlag } from '@/hooks/use-feature-flag';
+import { useFetchIntegrations } from '@/hooks/use-fetch-integrations';
+import { useTelemetry } from '@/hooks/use-telemetry';
+import { StepTypeEnum } from '@/utils/enums';
+import { buildRoute, ROUTES } from '@/utils/routes';
+import { TelemetryEvent } from '@/utils/telemetry';
+import { Step } from '@/utils/types';
 import { cn } from '../../utils/ui';
 import { Badge, BadgeIcon } from '../primitives/badge';
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '../primitives/popover';
 import { useWorkflow } from './workflow-provider';
-import { useFeatureFlag } from '@/hooks/use-feature-flag';
-import { FeatureFlagsKeysEnum } from '@novu/shared';
 
 interface WorkflowChecklistProps {
   steps: Step[];
@@ -57,11 +56,11 @@ export function WorkflowChecklist({ steps, workflow }: WorkflowChecklistProps) {
       if (allItemsCompleted) {
         setIsOpen(false);
 
-        telemetry(TelemetryEvent.WORKFLOW_CHECKLIST_COMPLETED, {
-          workflowId: workflow?.workflowId,
-        });
+        if (user && !user.unsafeMetadata?.workflowChecklistCompleted) {
+          telemetry(TelemetryEvent.WORKFLOW_CHECKLIST_COMPLETED, {
+            workflowId: workflow?.workflowId,
+          });
 
-        if (user) {
           user.update({
             unsafeMetadata: {
               ...user.unsafeMetadata,
@@ -181,7 +180,6 @@ function useChecklistItems(steps: Step[]) {
   const { workflow } = useWorkflow();
   const { integrations } = useFetchIntegrations();
   const telemetry = useTelemetry();
-  const isV2TemplateEditorEnabled = useFeatureFlag(FeatureFlagsKeysEnum.IS_V2_TEMPLATE_EDITOR_ENABLED);
 
   const foundInAppIntegration = integrations?.find(
     (integration) =>
@@ -218,9 +216,8 @@ function useChecklistItems(steps: Step[]) {
           const stepToConfig = steps.find((step) => step.type !== StepTypeEnum.TRIGGER);
 
           if (stepToConfig) {
-            const route = isV2TemplateEditorEnabled ? ROUTES.EDIT_STEP_TEMPLATE_V2 : ROUTES.EDIT_STEP_TEMPLATE;
             navigate(
-              buildRoute(route, {
+              buildRoute(ROUTES.EDIT_STEP_TEMPLATE, {
                 environmentSlug: currentEnvironment?.slug ?? '',
                 workflowSlug: workflow?.slug ?? '',
                 stepSlug: stepToConfig.slug,
@@ -251,7 +248,7 @@ function useChecklistItems(steps: Step[]) {
         onClick: () => {
           telemetry(TelemetryEvent.WORKFLOW_CHECKLIST_STEP_CLICKED, { stepTitle: 'Trigger workflow' });
           navigate(
-            buildRoute(isV2TemplateEditorEnabled ? ROUTES.TRIGGER_WORKFLOW : ROUTES.TEST_WORKFLOW, {
+            buildRoute(ROUTES.TRIGGER_WORKFLOW, {
               environmentSlug: currentEnvironment?.slug ?? '',
               workflowSlug: workflow?.slug ?? '',
             })
@@ -259,11 +256,11 @@ function useChecklistItems(steps: Step[]) {
         },
         link: {
           text: 'Learn how to trigger',
-          url: 'https://docs.novu.co/platform/trigger',
+          url: 'https://docs.novu.co/platform/concepts/trigger',
         },
       },
     ],
-    [currentEnvironment, workflow, foundInAppIntegration, navigate, steps, telemetry, isV2TemplateEditorEnabled]
+    [currentEnvironment, workflow, foundInAppIntegration, navigate, steps, telemetry]
   );
 }
 
@@ -274,7 +271,7 @@ function ChecklistItemButton({ item, steps }: { item: ChecklistItem; steps: Step
       className="hover:bg-background group flex w-full items-center gap-1 rounded-md transition-colors duration-200"
       onClick={item.onClick}
     >
-      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white shadow-[0px_1px_2px_0px_rgba(10,13,20,0.03)]">
+      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white shadow-xs">
         <div className="flex items-center justify-center">
           {item.isCompleted(steps) ? (
             <RiCheckboxCircleFill className="text-success h-4 w-4" />

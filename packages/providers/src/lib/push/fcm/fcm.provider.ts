@@ -1,8 +1,8 @@
-import { ChannelTypeEnum, ISendMessageSuccessResponse, IPushOptions, IPushProvider } from '@novu/stateless';
-import { initializeApp, cert, deleteApp, getApp } from 'firebase-admin/app';
-import { getMessaging, Messaging, MulticastMessage, TopicMessage } from 'firebase-admin/messaging';
-import crypto from 'crypto';
 import { PushProviderIdEnum } from '@novu/shared';
+import { ChannelTypeEnum, IPushOptions, IPushProvider, ISendMessageSuccessResponse } from '@novu/stateless';
+import crypto from 'crypto';
+import { cert, deleteApp, getApp, initializeApp } from 'firebase-admin/app';
+import { getMessaging, Messaging, MulticastMessage, TopicMessage } from 'firebase-admin/messaging';
 import { BaseProvider, CasingEnum } from '../../../base.provider';
 import { WithPassthrough } from '../../../utils/types';
 
@@ -10,6 +10,8 @@ export class FcmPushProvider extends BaseProvider implements IPushProvider {
   id = PushProviderIdEnum.FCM;
   channelType = ChannelTypeEnum.PUSH as ChannelTypeEnum.PUSH;
   protected casing: CasingEnum = CasingEnum.SNAKE_CASE;
+
+  private readonly INVALID_TOKEN_ERRORS = ['Requested entity was not found'];
 
   private appName: string;
   private messaging: Messaging;
@@ -55,6 +57,7 @@ export class FcmPushProvider extends BaseProvider implements IPushProvider {
     }) || {};
 
     const payload = this.cleanPayload(options.payload);
+    const novuData = payload.__nvMessageId ? { __nvMessageId: payload.__nvMessageId } : {};
     const transformedBase = this.transform<MulticastMessage | TopicMessage>(bridgeProviderData, {});
 
     const commonProps: Partial<MulticastMessage & TopicMessage> = {
@@ -73,7 +76,7 @@ export class FcmPushProvider extends BaseProvider implements IPushProvider {
           title: options.title,
           body: options.content,
         },
-        data,
+        data: { ...novuData, ...data },
         ...commonProps,
       }).body;
 
@@ -98,7 +101,7 @@ export class FcmPushProvider extends BaseProvider implements IPushProvider {
           body: options.content,
           ...overridesData,
         };
-        multicastConfig.data = data;
+        multicastConfig.data = { ...novuData, ...data };
       }
 
       const multicastMessage = this.transform<MulticastMessage>(
@@ -109,14 +112,14 @@ export class FcmPushProvider extends BaseProvider implements IPushProvider {
       res = await this.messaging.sendEachForMulticast(multicastMessage);
     }
 
+    const app = getApp(this.appName);
+    await deleteApp(app);
+
     if (res.successCount === 0) {
       throw new Error(
         `Sending message failed due to "${res.responses.find((i) => i.success === false).error.message}"`
       );
     }
-
-    const app = getApp(this.appName);
-    await deleteApp(app);
 
     return {
       ids:
@@ -129,6 +132,10 @@ export class FcmPushProvider extends BaseProvider implements IPushProvider {
             ),
       date: new Date().toISOString(),
     };
+  }
+
+  isTokenInvalid(errorMessage: string): boolean {
+    return this.INVALID_TOKEN_ERRORS.some((error) => errorMessage?.includes(error));
   }
 
   private cleanPayload(payload: object): Record<string, string> {

@@ -1,4 +1,6 @@
-import { FeatureFlagsKeysEnum } from '@novu/shared';
+import { motion } from 'motion/react';
+import { useState } from 'react';
+import { RiGroup2Line } from 'react-icons/ri';
 import { Separator } from '@/components/primitives/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives/tabs';
 import { Preferences } from '@/components/subscribers/preferences/preferences';
@@ -10,11 +12,6 @@ import { SubscriberSubscriptions } from '@/components/subscribers/subscriptions/
 import TruncatedText from '@/components/truncated-text';
 import { useFetchSubscriber } from '@/hooks/use-fetch-subscriber';
 import useFetchSubscriberPreferences from '@/hooks/use-fetch-subscriber-preferences';
-import { useFormProtection } from '@/hooks/use-form-protection';
-import { useState } from 'react';
-import { RiGroup2Line } from 'react-icons/ri';
-import { motion } from 'motion/react';
-import { useFeatureFlag } from '@/hooks/use-feature-flag';
 
 type SubscriberOverviewProps = {
   subscriberId: string;
@@ -50,15 +47,26 @@ type SubscriberPreferencesProps = {
 
 const SubscriberPreferences = (props: SubscriberPreferencesProps) => {
   const { subscriberId, readOnly = false } = props;
+  const [selectedContextKeys, setSelectedContextKeys] = useState<string[] | undefined>(['']);
+
   const { data, isPending } = useFetchSubscriberPreferences({
     subscriberId,
+    contextKeys: selectedContextKeys,
   });
 
   if (isPending) {
     return <PreferencesSkeleton />;
   }
 
-  return <Preferences subscriberPreferences={data!} subscriberId={subscriberId} readOnly={readOnly} />;
+  return (
+    <Preferences
+      subscriberPreferences={data!}
+      subscriberId={subscriberId}
+      readOnly={readOnly}
+      contextKeys={selectedContextKeys}
+      onContextChange={setSelectedContextKeys}
+    />
+  );
 };
 
 const tabTriggerClasses =
@@ -74,22 +82,9 @@ type SubscriberTabsProps = {
 export function SubscriberTabs(props: SubscriberTabsProps) {
   const { subscriberId, readOnly = false, onCloseDrawer, closeOnSave = false } = props;
   const [tab, setTab] = useState('overview');
-  const {
-    protectedOnValueChange,
-    ProtectionAlert,
-    ref: protectionRef,
-  } = useFormProtection({
-    onValueChange: setTab,
-  });
-  const isTopicsPageActive = useFeatureFlag(FeatureFlagsKeysEnum.IS_TOPICS_PAGE_ACTIVE, false);
 
   return (
-    <Tabs
-      ref={protectionRef}
-      className="flex h-full w-full flex-col"
-      value={tab}
-      onValueChange={protectedOnValueChange}
-    >
+    <Tabs className="flex h-full w-full flex-col" value={tab} onValueChange={setTab}>
       <header className="border-bg-soft flex h-12 w-full flex-row items-center gap-3 border-b px-3 py-4">
         <div className="flex flex-1 items-center gap-1 overflow-hidden text-sm font-medium">
           <RiGroup2Line className="size-5 p-0.5" />
@@ -106,12 +101,10 @@ export function SubscriberTabs(props: SubscriberTabsProps) {
           <span>Preferences</span>
           {tab === 'preferences' && <ActiveTabIndicator />}
         </TabsTrigger>
-        {isTopicsPageActive && (
-          <TabsTrigger value="subscriptions" className={tabTriggerClasses} variant="regular" size="lg">
-            <span>Subscriptions</span>
-            {tab === 'subscriptions' && <ActiveTabIndicator />}
-          </TabsTrigger>
-        )}
+        <TabsTrigger value="subscriptions" className={tabTriggerClasses} variant="regular" size="lg">
+          <span>Subscriptions</span>
+          {tab === 'subscriptions' && <ActiveTabIndicator />}
+        </TabsTrigger>
         <TabsTrigger value="activity-feed" className={tabTriggerClasses} variant="regular" size="lg">
           <span>Activity Feed</span>
           {tab === 'activity-feed' && <ActiveTabIndicator />}
@@ -128,17 +121,13 @@ export function SubscriberTabs(props: SubscriberTabsProps) {
       <TabsContent value="preferences" className="h-full w-full overflow-y-auto">
         <SubscriberPreferences subscriberId={subscriberId} readOnly={readOnly} />
       </TabsContent>
-      {isTopicsPageActive && (
-        <TabsContent value="subscriptions" className="h-full w-full overflow-y-auto">
-          <SubscriberSubscriptions subscriberId={subscriberId} />
-        </TabsContent>
-      )}
+      <TabsContent value="subscriptions" className="h-full w-full overflow-y-auto">
+        <SubscriberSubscriptions subscriberId={subscriberId} />
+      </TabsContent>
       <TabsContent value="activity-feed" className="h-full w-full overflow-y-auto">
         <SubscriberActivity subscriberId={subscriberId} />
       </TabsContent>
       <Separator />
-
-      {ProtectionAlert}
     </Tabs>
   );
 }

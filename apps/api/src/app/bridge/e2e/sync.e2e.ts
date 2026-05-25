@@ -1,17 +1,17 @@
+import {
+  ControlValuesRepository,
+  EnvironmentRepository,
+  MessageTemplateRepository,
+  NotificationTemplateRepository,
+} from '@novu/dal';
+import { SeverityLevelEnum, workflow } from '@novu/framework';
+import { ResourceOriginEnum, ResourceTypeEnum } from '@novu/shared';
 import { UserSession } from '@novu/testing';
 import { expect } from 'chai';
 import getPort from 'get-port';
-import {
-  EnvironmentRepository,
-  NotificationTemplateRepository,
-  MessageTemplateRepository,
-  ControlValuesRepository,
-} from '@novu/dal';
-import { WorkflowOriginEnum, WorkflowTypeEnum } from '@novu/shared';
-import { workflow } from '@novu/framework';
 import { TestBridgeServer } from '../../../../e2e/test-bridge-server';
 
-describe('Bridge Sync - /bridge/sync (POST) #novu-v2', async () => {
+describe('Bridge Sync - /bridge/sync (POST) #novu-v2', () => {
   let session: UserSession;
   const environmentRepository = new EnvironmentRepository();
   const workflowsRepository = new NotificationTemplateRepository();
@@ -80,6 +80,7 @@ describe('Bridge Sync - /bridge/sync (POST) #novu-v2', async () => {
         );
       },
       {
+        severity: SeverityLevelEnum.HIGH,
         payloadSchema: {
           type: 'object',
           properties: {
@@ -108,14 +109,19 @@ describe('Bridge Sync - /bridge/sync (POST) #novu-v2', async () => {
     expect(workflowsCount.length).to.equal(1);
 
     expect(workflowData.name).to.equal(workflowId);
-    expect(workflowData.type).to.equal(WorkflowTypeEnum.BRIDGE);
+    expect(workflowData.type).to.equal(ResourceTypeEnum.BRIDGE);
     expect(workflowData.rawData.workflowId).to.equal(workflowId);
     expect(workflowData.triggers[0].identifier).to.equal(workflowId);
 
+    expect(workflowData.severity).to.equal(SeverityLevelEnum.HIGH);
     expect(workflowData.steps.length).to.equal(1);
     expect(workflowData.steps[0].stepId).to.equal('send-email');
     expect(workflowData.steps[0].uuid).to.equal('send-email');
     expect(workflowData.steps[0].template?.name).to.equal('send-email');
+
+    expect(workflowData.rawData.payload).to.be.ok;
+    expect((workflowData.rawData.payload as any).schema).to.be.ok;
+    expect((workflowData.rawData.payload as any).unknownSchema).to.not.exist;
   });
 
   it('should create a workflow identified by a space-separated identifier', async () => {
@@ -144,7 +150,7 @@ describe('Bridge Sync - /bridge/sync (POST) #novu-v2', async () => {
     expect(workflowsCount.length).to.equal(1);
 
     expect(workflowData.name).to.equal(workflowId);
-    expect(workflowData.type).to.equal(WorkflowTypeEnum.BRIDGE);
+    expect(workflowData.type).to.equal(ResourceTypeEnum.BRIDGE);
     expect(workflowData.rawData.workflowId).to.equal(workflowId);
     expect(workflowData.triggers[0].identifier).to.equal(workflowId);
 
@@ -303,7 +309,7 @@ describe('Bridge Sync - /bridge/sync (POST) #novu-v2', async () => {
     const workflowData = workflows[0];
 
     expect(workflowData.name).to.equal(workflowId2);
-    expect(workflowData.type).to.equal(WorkflowTypeEnum.BRIDGE);
+    expect(workflowData.type).to.equal(ResourceTypeEnum.BRIDGE);
     expect(workflowData.rawData.workflowId).to.equal(workflowId2);
     expect(workflowData.triggers[0].identifier).to.equal(workflowId2);
 
@@ -591,7 +597,7 @@ describe('Bridge Sync - /bridge/sync (POST) #novu-v2', async () => {
     }
 
     expect(firstWorkflowResponse.name).to.equal(workflowId);
-    expect(firstWorkflowResponse.type).to.equal(WorkflowTypeEnum.BRIDGE);
+    expect(firstWorkflowResponse.type).to.equal(ResourceTypeEnum.BRIDGE);
     expect(firstWorkflowResponse.rawData.workflowId).to.equal(workflowId);
     expect(firstWorkflowResponse.triggers[0].identifier).to.equal(workflowId);
 
@@ -633,7 +639,7 @@ describe('Bridge Sync - /bridge/sync (POST) #novu-v2', async () => {
     }
 
     expect(secondWorkflowResponse.name).to.equal(workflowId);
-    expect(secondWorkflowResponse.type).to.equal(WorkflowTypeEnum.BRIDGE);
+    expect(secondWorkflowResponse.type).to.equal(ResourceTypeEnum.BRIDGE);
     expect(secondWorkflowResponse.rawData.workflowId).to.equal(workflowId);
     expect(secondWorkflowResponse.triggers[0].identifier).to.equal(workflowId);
 
@@ -653,6 +659,49 @@ describe('Bridge Sync - /bridge/sync (POST) #novu-v2', async () => {
     expect(secondStepResponse.body.data.controls.subject).to.equal('Hello World again');
   });
 
+  it('should handle re-sync when a step has a null control values record', async () => {
+    const workflowId = 'null-controls-workflow';
+    const newWorkflow = workflow(workflowId, async ({ step }) => {
+      await step.email('send-email', () => ({
+        subject: 'Welcome!',
+        body: 'Hello there',
+      }));
+    });
+    await bridgeServer.start({ workflows: [newWorkflow] });
+
+    const firstSync = await session.testAgent.post(`/v1/bridge/sync`).send({
+      bridgeUrl: bridgeServer.serverPath,
+    });
+    expect(firstSync.status).to.equal(201);
+    expect(firstSync.body.data?.length).to.equal(1);
+
+    const createdWorkflow = await workflowsRepository.findById(firstSync.body.data[0]._id, session.environment._id);
+    expect(createdWorkflow).to.be.ok;
+    if (!createdWorkflow) throw new Error('Workflow not found');
+
+    await controlValuesRepository.create({
+      _environmentId: session.environment._id,
+      _organizationId: session.organization._id,
+      _workflowId: createdWorkflow._id,
+      _stepId: createdWorkflow.steps[0]._templateId,
+      level: 'step_controls',
+      controls: null as any,
+      priority: 0,
+    });
+
+    const secondSync = await session.testAgent.post(`/v1/bridge/sync`).send({
+      bridgeUrl: bridgeServer.serverPath,
+    });
+
+    expect(secondSync.status).to.equal(201);
+    expect(secondSync.body.data?.length).to.equal(1);
+
+    const updatedWorkflow = await workflowsRepository.findById(firstSync.body.data[0]._id, session.environment._id);
+    expect(updatedWorkflow).to.be.ok;
+    expect(updatedWorkflow?.steps.length).to.equal(1);
+    expect(updatedWorkflow?.steps[0].stepId).to.equal('send-email');
+  });
+
   it('should throw an error when trying to sync a workflow with an ID that exists in dashboard', async () => {
     const workflowId = 'dashboard-created-workflow';
 
@@ -665,7 +714,7 @@ describe('Bridge Sync - /bridge/sync (POST) #novu-v2', async () => {
       active: true,
       draft: false,
       workflowId,
-      origin: WorkflowOriginEnum.NOVU_CLOUD,
+      origin: ResourceOriginEnum.NOVU_CLOUD,
     });
 
     // Now try to sync a workflow with the same ID through bridge
@@ -692,6 +741,142 @@ describe('Bridge Sync - /bridge/sync (POST) #novu-v2', async () => {
     expect(workflows).to.deep.equal(dashboardWorkflow);
   });
 
+  describe('SSRF protection', () => {
+    // Locks in the SSRF guard — see Sync.assertSafeBridgeUrl. /bridge/sync is
+    // gated by BRIDGE_WRITE, but an authenticated operator must not be able to
+    // repoint the bridge at internal hosts (loopback name, cloud metadata) or
+    // sneak in non-http schemes / embedded credentials.
+    it('should reject bridgeUrl pointing at localhost', async () => {
+      const result = await session.testAgent.post(`/v1/bridge/sync`).send({
+        bridgeUrl: 'http://localhost:4000/api/novu',
+      });
+
+      expect(result.status).to.equal(400);
+      expect(JSON.stringify(result.body)).to.match(/bridgeUrl/i);
+    });
+
+    it('should reject bridgeUrl pointing at cloud metadata hostname', async () => {
+      const result = await session.testAgent.post(`/v1/bridge/sync`).send({
+        bridgeUrl: 'http://metadata.google.internal/computeMetadata/v1/',
+      });
+
+      expect(result.status).to.equal(400);
+      expect(JSON.stringify(result.body)).to.match(/bridgeUrl/i);
+    });
+
+    it('should reject bridgeUrl with embedded credentials', async () => {
+      const result = await session.testAgent.post(`/v1/bridge/sync`).send({
+        bridgeUrl: 'http://attacker:pass@example.com/api/novu',
+      });
+
+      expect(result.status).to.equal(400);
+    });
+
+    it('should reject bridgeUrl with non-http scheme', async () => {
+      const result = await session.testAgent.post(`/v1/bridge/sync`).send({
+        bridgeUrl: 'ftp://example.com/api/novu',
+      });
+
+      // CreateBridgeRequestDto's IsUrl validator rejects non-http schemes
+      // before the use-case runs, so the request fails at the DTO layer (422).
+      expect(result.status).to.equal(422);
+    });
+
+    // Locks in the connect-time DNS-pinned guard (enforceSsrfProtection:
+    // true). IP-literal private addresses pass the synchronous URL check but
+    // must be rejected before the TCP connect.
+    // Connect-time block returns a stable client-safe message — the
+    // resolved IP must NOT leak to the response (it's logged server-side
+    // instead).
+    it('should reject bridgeUrl pointing at link-local cloud metadata IP', async () => {
+      const result = await session.testAgent.post(`/v1/bridge/sync`).send({
+        bridgeUrl: 'http://169.254.169.254/computeMetadata/v1/',
+      });
+
+      expect(result.status).to.equal(400);
+      expect(JSON.stringify(result.body)).to.match(/blocked by the outbound SSRF policy/i);
+      expect(JSON.stringify(result.body)).to.not.match(/169\.254\.169\.254/);
+    });
+
+    it('should reject bridgeUrl pointing at RFC1918 private IP', async () => {
+      const result = await session.testAgent.post(`/v1/bridge/sync`).send({
+        bridgeUrl: 'http://10.0.0.1/api/novu',
+      });
+
+      expect(result.status).to.equal(400);
+      expect(JSON.stringify(result.body)).to.match(/blocked by the outbound SSRF policy/i);
+      expect(JSON.stringify(result.body)).to.not.match(/10\.0\.0\.1/);
+    });
+  });
+
+  describe('/bridge/validate (POST)', () => {
+    it('should report isValid false for localhost bridge URL', async () => {
+      const result = await session.testAgent.post(`/v1/bridge/validate`).send({
+        bridgeUrl: 'http://localhost:4000/api/novu',
+      });
+
+      expect(result.status).to.equal(201);
+      expect(result.body.data.isValid).to.equal(false);
+      expect(result.body.data.error).to.match(/localhost/i);
+    });
+
+    it('should report isValid false for cloud metadata hostname', async () => {
+      const result = await session.testAgent.post(`/v1/bridge/validate`).send({
+        bridgeUrl: 'http://metadata.google.internal/computeMetadata/v1/',
+      });
+
+      expect(result.status).to.equal(201);
+      expect(result.body.data.isValid).to.equal(false);
+      expect(result.body.data.error).to.match(/metadata\.google\.internal/i);
+    });
+
+    it('should reject non-http scheme at the DTO layer', async () => {
+      const result = await session.testAgent.post(`/v1/bridge/validate`).send({
+        bridgeUrl: 'ftp://example.com/api/novu',
+      });
+
+      // ValidateBridgeUrlRequestDto's IsUrl validator rejects non-http
+      // schemes before the controller runs, so the request fails at the DTO
+      // layer (422).
+      expect(result.status).to.equal(422);
+    });
+
+    it('should report isValid false for embedded credentials', async () => {
+      const result = await session.testAgent.post(`/v1/bridge/validate`).send({
+        bridgeUrl: 'http://attacker:pass@example.com/api/novu',
+      });
+
+      expect(result.status).to.equal(201);
+      expect(result.body.data.isValid).to.equal(false);
+      expect(result.body.data.error).to.match(/credentials/i);
+    });
+
+    // Connect-time block returns a stable client-safe message — the
+    // resolved IP must NOT leak to the response (it's logged server-side
+    // instead).
+    it('should report isValid false for link-local cloud metadata IP', async () => {
+      const result = await session.testAgent.post(`/v1/bridge/validate`).send({
+        bridgeUrl: 'http://169.254.169.254/computeMetadata/v1/',
+      });
+
+      expect(result.status).to.equal(201);
+      expect(result.body.data.isValid).to.equal(false);
+      expect(result.body.data.error).to.match(/blocked by the outbound SSRF policy/i);
+      expect(result.body.data.error).to.not.match(/169\.254\.169\.254/);
+    });
+
+    it('should report isValid false for RFC1918 private IP', async () => {
+      const result = await session.testAgent.post(`/v1/bridge/validate`).send({
+        bridgeUrl: 'http://10.0.0.1/api/novu',
+      });
+
+      expect(result.status).to.equal(201);
+      expect(result.body.data.isValid).to.equal(false);
+      expect(result.body.data.error).to.match(/blocked by the outbound SSRF policy/i);
+      expect(result.body.data.error).to.not.match(/10\.0\.0\.1/);
+    });
+  });
+
   it('should allow syncing a workflow with same ID if original was created externally', async () => {
     const workflowId = 'external-created-workflow';
 
@@ -704,7 +889,7 @@ describe('Bridge Sync - /bridge/sync (POST) #novu-v2', async () => {
       active: true,
       draft: false,
       workflowId,
-      origin: WorkflowOriginEnum.EXTERNAL,
+      origin: ResourceOriginEnum.EXTERNAL,
     });
 
     // Now try to sync a workflow with the same ID through bridge
@@ -727,7 +912,7 @@ describe('Bridge Sync - /bridge/sync (POST) #novu-v2', async () => {
       _environmentId: session.environment._id,
       _id: externalWorkflow._id,
     });
-    expect(workflows?.origin).to.equal(WorkflowOriginEnum.EXTERNAL);
+    expect(workflows?.origin).to.equal(ResourceOriginEnum.EXTERNAL);
     expect(workflows?.steps[0]?.stepId).to.equal('send-email');
   });
 });

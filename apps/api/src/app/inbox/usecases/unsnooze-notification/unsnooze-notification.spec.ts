@@ -1,15 +1,14 @@
-import sinon from 'sinon';
-import { expect } from 'chai';
 import { NotFoundException } from '@nestjs/common';
 import { CreateExecutionDetails, CreateExecutionDetailsCommand, PinoLogger } from '@novu/application-generic';
-import { JobEntity, JobRepository, MessageRepository, MessageEntity } from '@novu/dal';
-import { ChannelTypeEnum, JobStatusEnum } from '@novu/shared';
-
-import { UnsnoozeNotification } from './unsnooze-notification.usecase';
-import { UnsnoozeNotificationCommand } from './unsnooze-notification.command';
-import { MarkNotificationAs } from '../mark-notification-as/mark-notification-as.usecase';
+import { JobEntity, JobRepository, MessageEntity, MessageRepository } from '@novu/dal';
+import { ChannelTypeEnum, JobStatusEnum, SeverityLevelEnum } from '@novu/shared';
+import { expect } from 'chai';
+import sinon from 'sinon';
+import { InboxNotificationDto } from '../../dtos/inbox-notification.dto';
 import { MarkNotificationAsCommand } from '../mark-notification-as/mark-notification-as.command';
-import { InboxNotification } from '../../utils/types';
+import { MarkNotificationAs } from '../mark-notification-as/mark-notification-as.usecase';
+import { UnsnoozeNotificationCommand } from './unsnooze-notification.command';
+import { UnsnoozeNotification } from './unsnooze-notification.usecase';
 
 describe('UnsnoozeNotification', () => {
   const validNotificationId = '507f1f77bcf86cd799439011';
@@ -54,19 +53,22 @@ describe('UnsnoozeNotification', () => {
     delay: 3600000,
   } as JobEntity;
 
-  const mockNotification: InboxNotification = {
+  const mockNotification: InboxNotificationDto = {
     id: validNotificationId,
+    transactionId: 'transaction-id',
     body: 'Test notification content',
     to: {
       subscriberId: validSubscriberId,
       id: validSubscriberId,
     },
+    isSeen: false,
     isRead: false,
     isArchived: false,
     isSnoozed: false,
     snoozedUntil: null,
     createdAt: new Date().toISOString(),
     channelType: ChannelTypeEnum.IN_APP,
+    severity: SeverityLevelEnum.NONE,
   };
 
   beforeEach(() => {

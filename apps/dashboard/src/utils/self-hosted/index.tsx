@@ -1,12 +1,6 @@
-import React from 'react';
-import { OrganizationSwitcher } from './organization-switcher';
-import { UserButton } from './user-button';
-import { OrganizationContextProvider, useOrganization } from './organization.resource';
-import { UserContextProvider, useUser } from './user.resource';
-import { AuthContextProvider, useAuth } from './auth.resource';
 import { IOrganizationEntity } from '@novu/shared';
-import { getJwtToken, isJwtValid } from './jwt-manager';
-
+import React from 'react';
+import { AuthContextProvider, useAuth } from './auth.resource';
 import {
   OrganizationList,
   OrganizationProfile,
@@ -17,24 +11,29 @@ import {
   SignUp,
   UserProfile,
 } from './components';
+import { getJwtToken, isJwtValid } from './jwt-manager';
+import { OrganizationSwitcher } from './organization-switcher';
+import { OrganizationContextProvider, useOrganization } from './organization.resource';
+import { UserButton } from './user-button';
+import { UserContextProvider, useUser } from './user.resource';
 
 export {
-  OrganizationSwitcher,
-  UserButton,
-  OrganizationContextProvider,
-  AuthContextProvider,
-  OrganizationList,
-  OrganizationProfile,
-  UserProfile,
-  SignIn,
-  SignUp,
-  RedirectToSignIn,
+  AuthContextProvider, OrganizationContextProvider, OrganizationList,
+  OrganizationProfile, OrganizationSwitcher, RedirectToSignIn,
   SignedIn,
-  SignedOut,
+  SignedOut, SignIn,
+  SignUp, UserButton, UserProfile
 };
 
-// eslint-disable-next-line react-refresh/only-export-components
-export { useOrganization, useUser, useAuth };
+  export { useAuth, useOrganization, useUser };
+
+export const useClerk = () => {
+  return {
+    setActive: async () => {
+      console.warn('Clerk.setActive is not available in self-hosted mode');
+    },
+  };
+};
 
 export const useOrganizationList = () => {
   const { organization, isLoaded } = useOrganization() as {
@@ -51,7 +50,12 @@ export const useOrganizationList = () => {
 
 export const ClerkContext = React.createContext({});
 
-export const Protect = ({ children, ...rest }: any) => {
+export type ProtectProps = {
+  children: React.ReactNode;
+  [key: string]: any;
+};
+
+export const Protect = ({ children, ...rest }: ProtectProps) => {
   return children;
 };
 
@@ -69,7 +73,6 @@ export function ClerkProvider({ children }: any) {
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 (window as any).Clerk = {
   loggedIn: isJwtValid(getJwtToken()),
   session: {

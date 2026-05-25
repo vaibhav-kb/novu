@@ -1,10 +1,13 @@
-import { Test } from '@nestjs/testing';
-import { expect } from 'chai';
-import { formatISO } from 'date-fns';
-import { v4 as uuid } from 'uuid';
 import { faker } from '@faker-js/faker';
-import { setTimeout } from 'timers/promises';
-
+import { Test } from '@nestjs/testing';
+import {
+  CloudflareSchedulerService,
+  FeatureFlagsService,
+  PinoLogger,
+  SqsService,
+  StandardQueueService,
+  WorkflowInMemoryProviderService,
+} from '@novu/application-generic';
 import {
   CommunityOrganizationRepository,
   EnvironmentEntity,
@@ -22,22 +25,54 @@ import {
 import { StepTypeEnum } from '@novu/shared';
 import {
   EnvironmentService,
+  JobsService,
   NotificationTemplateService,
   OrganizationService,
   SubscribersService,
   UserService,
-  JobsService,
 } from '@novu/testing';
-import { StandardQueueService, WorkflowInMemoryProviderService } from '@novu/application-generic';
-
-import { StandardWorker } from './standard.worker';
-
-import { WorkflowModule } from '../workflow.module';
-import { HandleLastFailedJob, RunJob, SetJobAsFailed, WebhookFilterBackoffStrategy } from '../usecases';
+import { expect } from 'chai';
+import { formatISO } from 'date-fns';
+import { setTimeout } from 'timers/promises';
+import { v4 as uuid } from 'uuid';
 import { SharedModule } from '../../shared/shared.module';
+import { HandleLastFailedJob, RunJob, SetJobAsFailed, WebhookFilterBackoffStrategy } from '../usecases';
+import { WorkflowModule } from '../workflow.module';
+import { StandardWorker } from './standard.worker';
 
 let standardQueueService: StandardQueueService;
 let standardWorker: StandardWorker;
+
+const mockCloudflareSchedulerService = {
+  scheduleJob: async () => {},
+  cancelJob: async () => false,
+  isConfigured: () => false,
+} as unknown as CloudflareSchedulerService;
+
+const mockFeatureFlagsService = {
+  getFlag: async () => false,
+} as unknown as FeatureFlagsService;
+
+const mockOrganizationRepository = {
+  findOne: async () => ({ _id: 'mock-org-id', apiServiceLevel: 'free' }),
+} as unknown as CommunityOrganizationRepository;
+
+const mockSqsService = {
+  getQueueUrl: () => undefined,
+  getProducer: () => undefined,
+  getClient: () => ({}) as any,
+  isConfigured: () => false,
+  send: async () => {},
+  sendBulk: async () => {},
+} as unknown as SqsService;
+
+const mockLogger = {
+  setContext: () => {},
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+} as unknown as PinoLogger;
 
 describe('Standard Worker', () => {
   let jobRepository: JobRepository;
@@ -94,7 +129,14 @@ describe('Standard Worker', () => {
       WorkflowInMemoryProviderService
     );
 
-    standardQueueService = new StandardQueueService(workflowInMemoryProviderService);
+    standardQueueService = new StandardQueueService(
+      workflowInMemoryProviderService,
+      mockCloudflareSchedulerService,
+      mockFeatureFlagsService,
+      mockOrganizationRepository,
+      mockSqsService,
+      mockLogger
+    );
     await standardQueueService.queue.obliterate();
   });
 
@@ -111,6 +153,7 @@ describe('Standard Worker', () => {
       WorkflowInMemoryProviderService
     );
     const organizationRepository = moduleRef.get<CommunityOrganizationRepository>(CommunityOrganizationRepository);
+    const featureFlagsService = moduleRef.get<FeatureFlagsService>(FeatureFlagsService);
 
     standardWorker = new StandardWorker(
       handleLastFailedJob,
@@ -119,7 +162,10 @@ describe('Standard Worker', () => {
       webhookFilterBackoffStrategy,
       workflowInMemoryProviderService,
       organizationRepository,
-      jobRepository
+      jobRepository,
+      mockSqsService,
+      mockLogger,
+      featureFlagsService
     );
   });
 
@@ -132,7 +178,7 @@ describe('Standard Worker', () => {
     expect(standardWorker).to.be.ok;
 
     expect(standardWorker.DEFAULT_ATTEMPTS).to.eql(3);
-    expect(standardWorker.worker).to.deep.include({
+    expect(standardWorker.bullMqWorker).to.deep.include({
       _eventsCount: 2,
       _maxListeners: undefined,
       name: 'standard',
@@ -144,7 +190,7 @@ describe('Standard Worker', () => {
       workerIsPaused: false,
       workerIsRunning: true,
     });
-    expect(standardWorker.worker.opts).to.deep.include({
+    expect(standardWorker.bullMqWorker.opts).to.deep.include({
       concurrency: 200,
       lockDuration: 90000,
     });
@@ -302,7 +348,7 @@ describe('Standard Worker', () => {
   });
 
   it('should pause the worker', async () => {
-    const isPaused = await standardWorker.worker.isPaused();
+    const isPaused = await standardWorker.bullMqWorker.isPaused();
     expect(isPaused).to.equal(false);
 
     const runningStatus = await standardWorker.bullMqService.getStatus();
@@ -316,7 +362,7 @@ describe('Standard Worker', () => {
 
     await standardWorker.pause();
 
-    const isNowPaused = await standardWorker.worker.isPaused();
+    const isNowPaused = await standardWorker.bullMqWorker.isPaused();
     expect(isNowPaused).to.equal(true);
 
     const runningStatusChanged = await standardWorker.bullMqService.getStatus();
@@ -332,7 +378,7 @@ describe('Standard Worker', () => {
   it('should resume the worker', async () => {
     await standardWorker.pause();
 
-    const isPaused = await standardWorker.worker.isPaused();
+    const isPaused = await standardWorker.bullMqWorker.isPaused();
     expect(isPaused).to.equal(true);
 
     const runningStatus = await standardWorker.bullMqService.getStatus();
@@ -346,7 +392,7 @@ describe('Standard Worker', () => {
 
     await standardWorker.resume();
 
-    const isNowPaused = await standardWorker.worker.isPaused();
+    const isNowPaused = await standardWorker.bullMqWorker.isPaused();
     expect(isNowPaused).to.equal(false);
 
     const runningStatusChanged = await standardWorker.bullMqService.getStatus();

@@ -1,23 +1,20 @@
-import { Injectable } from '@nestjs/common';
-import { merge } from 'lodash';
-import { readFile } from 'fs/promises';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
-
-import { IEmailBlock, CommunityOrganizationRepository } from '@novu/dal';
-
-import { CompileTemplate, CompileTemplateBase } from '../compile-template';
-import { BadRequestException } from '@nestjs/common';
-import { CompileEmailTemplateCommand } from './compile-email-template.command';
-import { LayoutDto, GetLayoutCommand, GetLayoutUseCase } from '../get-layout';
+import { CommunityOrganizationRepository, IEmailBlock } from '@novu/dal';
+import { merge } from 'es-toolkit/compat';
+import { readFile } from 'fs/promises';
 import { VerifyPayloadService } from '../../services';
+import { CompileTemplate, CompileTemplateBase } from '../compile-template';
+import { GetLayoutCommandV0, GetLayoutUseCaseV0, LayoutDtoV0 } from '../get-layout-v0';
 import { GetNovuLayout } from '../get-novu-layout';
+import { CompileEmailTemplateCommand } from './compile-email-template.command';
 
 @Injectable()
 export class CompileEmailTemplate extends CompileTemplateBase {
   constructor(
     private compileTemplate: CompileTemplate,
     protected communityOrganizationRepository: CommunityOrganizationRepository,
-    private getLayoutUsecase: GetLayoutUseCase,
+    private getLayoutUsecase: GetLayoutUseCaseV0,
     private getNovuLayoutUsecase: GetNovuLayout,
     protected moduleRef: ModuleRef
   ) {
@@ -34,13 +31,13 @@ export class CompileEmailTemplate extends CompileTemplateBase {
 
     const isEditorMode = command.contentType === 'editor';
 
-    let layout: LayoutDto | null = null;
+    let layout: LayoutDtoV0 | null = null;
     let layoutContent: string | null = null;
 
     if (command.layoutId) {
       layout = await this.getLayoutUsecase.execute(
-        GetLayoutCommand.create({
-          layoutId: command.layoutId,
+        GetLayoutCommandV0.create({
+          layoutIdOrInternalId: command.layoutId,
           environmentId: command.environmentId,
           organizationId: command.organizationId,
         })
@@ -64,7 +61,6 @@ export class CompileEmailTemplate extends CompileTemplateBase {
     const { content } = command;
     let { preheader } = command;
 
-    // eslint-disable-next-line no-param-reassign
     command.payload = merge({}, defaultPayload, command.payload);
 
     const payload = {
@@ -95,6 +91,7 @@ export class CompileEmailTemplate extends CompileTemplateBase {
 
     if (isEditorMode) {
       for (const block of content as IEmailBlock[]) {
+        if (typeof block !== 'object' || block === null) continue;
         block.content = await this.renderContent(block.content, payload, i18nInstance);
         block.url = await this.renderContent(block.url || '', payload, i18nInstance);
       }
@@ -148,8 +145,7 @@ export class CompileEmailTemplate extends CompileTemplateBase {
   public static addPreheader(content: string): string {
     // "&nbsp;&zwnj;&nbsp;&zwnj;" is needed to spacing away the rest of the email from the preheader area in email clients
     return content?.replace(
-      // eslint-disable-next-line no-useless-escape
-      /<body\b[^\<\>]*?>/,
+      /<body\b[^<>]*?>/,
       `$&{{#if preheader}}
           <div style="display: none; max-height: 0px; overflow: hidden;">
             {{preheader}}

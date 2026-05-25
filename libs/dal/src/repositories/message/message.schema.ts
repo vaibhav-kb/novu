@@ -1,4 +1,4 @@
-import { ActorTypeEnum } from '@novu/shared';
+import { ActorTypeEnum, SeverityLevelEnum } from '@novu/shared';
 import mongoose, { Schema } from 'mongoose';
 
 import { schemaOptions } from '../schema-default.options';
@@ -34,6 +34,7 @@ const messageSchema = new Schema<MessageDBModel>(
       ref: 'Job',
     },
     templateIdentifier: Schema.Types.String,
+    stepId: Schema.Types.String,
     email: Schema.Types.String,
     subject: Schema.Types.String,
     cta: {
@@ -71,7 +72,7 @@ const messageSchema = new Schema<MessageDBModel>(
     phone: Schema.Types.String,
     directWebhookUrl: Schema.Types.String,
     providerId: Schema.Types.String,
-    deviceTokens: [Schema.Types.Array],
+    deviceTokens: [Schema.Types.String],
     title: Schema.Types.String,
     seen: {
       type: Schema.Types.Boolean,
@@ -91,6 +92,7 @@ const messageSchema = new Schema<MessageDBModel>(
       default: undefined,
     },
     lastSeenDate: Schema.Types.Date,
+    firstSeenDate: Schema.Types.Date,
     lastReadDate: Schema.Types.Date,
     archivedAt: Schema.Types.Date,
     status: {
@@ -99,7 +101,6 @@ const messageSchema = new Schema<MessageDBModel>(
     },
     errorId: Schema.Types.String,
     errorText: Schema.Types.String,
-    providerResponse: Schema.Types.Mixed,
     transactionId: {
       type: Schema.Types.String,
     },
@@ -120,27 +121,69 @@ const messageSchema = new Schema<MessageDBModel>(
     },
     tags: [Schema.Types.String],
     avatar: Schema.Types.String,
+    severity: {
+      type: Schema.Types.String,
+      enum: SeverityLevelEnum,
+      default: SeverityLevelEnum.NONE,
+    },
+    channelData: {
+      type: [
+        {
+          _id: false,
+          identifier: {
+            type: Schema.Types.String,
+            required: true,
+          },
+          type: {
+            type: Schema.Types.String,
+            required: true,
+          },
+          endpoint: {
+            type: Schema.Types.Mixed,
+            required: true,
+          },
+          token: {
+            type: Schema.Types.String,
+            required: false,
+          },
+        },
+      ],
+      default: undefined,
+    },
+    contextKeys: {
+      type: [Schema.Types.String],
+      default: undefined,
+    },
   },
   schemaOptions
 );
+
+messageSchema.pre('init', function sanitizeCorruptCta(doc: Record<string, unknown>) {
+  if (doc.cta !== undefined && doc.cta !== null && typeof doc.cta !== 'object') {
+    doc.cta = {};
+  }
+  if (doc.cta && typeof doc.cta === 'object') {
+    const cta = doc.cta as Record<string, unknown>;
+    if (cta.action !== undefined && cta.action !== null && typeof cta.action !== 'object') {
+      cta.action = {};
+    }
+  }
+});
 
 /**
  * todo: all the pre hooks should be removed after all the soft deletes are removed task nv-5688
  */
 messageSchema.pre('find', function filterDeletedFind() {
-  this.where({ deleted: { $ne: true } });
+  this.where({ deleted: { $exists: false } });
 });
 messageSchema.pre('findOne', function filterDeletedFindOne() {
-  this.where({ deleted: { $ne: true } });
+  this.where({ deleted: { $exists: false } });
 });
 messageSchema.pre('findOneAndUpdate', function filterDeletedFindOneAndUpdate() {
-  this.where({ deleted: { $ne: true } });
+  this.where({ deleted: { $exists: false } });
 });
 messageSchema.pre('countDocuments', function filterDeletedCountDocuments() {
-  this.where({ deleted: { $ne: true } });
-});
-messageSchema.pre('count', function filterDeletedCount() {
-  this.where({ deleted: { $ne: true } });
+  this.where({ deleted: { $exists: false } });
 });
 
 messageSchema.virtual('subscriber', {
@@ -215,21 +258,13 @@ messageSchema.index({
   _subscriberId: 1,
   _environmentId: 1,
   channel: 1,
+  contextKeys: 1,
+  seen: 1,
   read: 1,
   archived: 1,
-  seen: 1,
   snoozedUntil: 1,
+  severity: 1,
   createdAt: -1,
-});
-
-/*
- * Path : libs/dal/src/repositories/message/message.repository.ts
- * Context : updateFeedByMessageTemplateId()
- * Query : update({ _environmentId: environmentId, _messageTemplateId: messageId }
- */
-messageSchema.index({
-  _messageTemplateId: 1,
-  _environmentId: 1,
 });
 
 /*
@@ -287,6 +322,7 @@ messageSchema.index({
  *     createdAt: { $gte: startOfMonth(new Date()), $lte: endOfMonth(new Date()) },
  *   }
  */
+
 messageSchema.index({
   _environmentId: 1,
   providerId: 1,
@@ -302,6 +338,55 @@ messageSchema.index({ createdAt: 1 });
  * todo: remove deleted field after all the soft deletes are removed task nv-5688
  */
 messageSchema.index({ _environmentId: 1, _jobId: 1, deleted: 1 });
+
+/**
+ * Used in worker to find messages that are snoozed
+ * process-unsnooze-job.usecase.ts
+ */
+messageSchema.index({ _notificationId: 1, snoozedUntil: 1 });
+
+messageSchema.index({
+  _subscriberId: 1,
+  _environmentId: 1,
+  channel: 1,
+  seen: 1,
+  read: 1,
+  archived: 1,
+  snoozedUntil: 1,
+  severity: 1,
+  createdAt: -1,
+});
+
+messageSchema.index({
+  _subscriberId: 1,
+  _environmentId: 1,
+  channel: 1,
+  read: 1,
+  seen: 1,
+  tags: 1,
+  archived: 1,
+  snoozedUntil: 1,
+  createdAt: -1,
+  _id: -1,
+});
+
+messageSchema.index({
+  identifier: 1,
+  _environmentId: 1,
+  _organizationId: 1,
+});
+
+messageSchema.index({
+  _subscriberId: 1,
+  _environmentId: 1,
+  channel: 1,
+  seen: 1,
+  read: 1,
+  archived: 1,
+  deleted: 1,
+  createdAt: -1,
+  _id: -1,
+});
 
 export const Message =
   (mongoose.models.Message as mongoose.Model<MessageDBModel>) ||

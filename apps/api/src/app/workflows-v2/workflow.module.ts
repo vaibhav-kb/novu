@@ -1,63 +1,72 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import {
-  CreateWorkflow,
+  BuildStepDataUsecase,
+  BuildStepIssuesUsecase,
+  BuildVariableSchemaUsecase,
+  ControlValueSanitizerService,
+  CreateVariablesObject,
+  CreateWorkflowV0,
   DeletePreferencesUseCase,
-  DeleteWorkflowUseCase,
   GetPreferences,
   GetWorkflowByIdsUseCase,
+  GetWorkflowUseCase,
   GetWorkflowWithPreferencesUseCase,
+  MockDataGeneratorService,
+  PayloadMergerService,
+  PreviewErrorHandler,
+  PreviewPayloadProcessorService,
+  PreviewUsecase,
   ResourceValidatorService,
   TierRestrictionsValidateUsecase,
-  UpdateWorkflow,
+  UpdateWorkflowV0,
   UpsertControlValuesUseCase,
   UpsertPreferences,
+  UpsertWorkflowUseCase,
 } from '@novu/application-generic';
-
 import { CommunityOrganizationRepository } from '@novu/dal';
 import { AuthModule } from '../auth/auth.module';
 import { BridgeModule } from '../bridge';
 import { ChangeModule } from '../change/change.module';
 import { IntegrationModule } from '../integrations/integrations.module';
+import { LayoutsV2Module } from '../layouts-v2/layouts.module';
 import { MessageTemplateModule } from '../message-template/message-template.module';
+import { OutboundWebhooksModule } from '../outbound-webhooks/outbound-webhooks.module';
 import { SharedModule } from '../shared/shared.module';
+import { StepResolversModule } from '../step-resolvers/step-resolvers.module';
+import { DeleteWorkflowUseCase } from '../workflows-v1/usecases/delete-workflow/delete-workflow.usecase';
+
 import {
-  BuildStepDataUsecase,
-  BuildVariableSchemaUsecase,
   BuildWorkflowTestDataUseCase,
-  PreviewUsecase,
-  GetWorkflowUseCase,
   ListWorkflowsUseCase,
   SyncToEnvironmentUseCase,
-  UpsertWorkflowUseCase,
+  TestHttpEndpointUsecase,
 } from './usecases';
-import { PatchWorkflowUsecase } from './usecases/patch-workflow';
-import { CreateVariablesObject } from './usecases/create-variables-object/create-variables-object.usecase';
-import { BuildStepIssuesUsecase } from './usecases/build-step-issues/build-step-issues.usecase';
-import { WorkflowController } from './workflow.controller';
+
 import { DuplicateWorkflowUseCase } from './usecases/duplicate-workflow/duplicate-workflow.usecase';
-import { WebhooksModule } from '../webhooks/webhooks.module';
-import { ControlValueSanitizerService } from './usecases/preview/services/control-value-sanitizer.service';
-import { PayloadMergerService } from './usecases/preview/services/payload-merger.service';
-import { SchemaBuilderService } from './usecases/preview/services/schema-builder.service';
-import { PreviewPayloadProcessorService } from './usecases/preview/services/preview-payload-processor.service';
-import { MockDataGeneratorService } from './usecases/preview/services/mock-data-generator.service';
-import { PreviewErrorHandler } from './usecases/preview/utils/preview-error-handler';
+import { PatchWorkflowUsecase } from './usecases/patch-workflow';
+import { WorkflowController } from './workflow.controller';
 
 const DAL_REPOSITORIES = [CommunityOrganizationRepository];
 
-const MODULES = [SharedModule, MessageTemplateModule, ChangeModule, AuthModule, BridgeModule, IntegrationModule];
-
-if (process.env.NOVU_ENTERPRISE === 'true') {
-  MODULES.push(WebhooksModule);
-}
+const MODULES = [
+  SharedModule,
+  MessageTemplateModule,
+  ChangeModule,
+  AuthModule,
+  BridgeModule,
+  IntegrationModule,
+  LayoutsV2Module,
+  OutboundWebhooksModule.forRoot(),
+  StepResolversModule,
+];
 
 @Module({
   imports: MODULES,
   controllers: [WorkflowController],
   providers: [
     ...DAL_REPOSITORIES,
-    CreateWorkflow,
-    UpdateWorkflow,
+    CreateWorkflowV0,
+    UpdateWorkflowV0,
     UpsertWorkflowUseCase,
     ListWorkflowsUseCase,
     DeleteWorkflowUseCase,
@@ -81,11 +90,12 @@ if (process.env.NOVU_ENTERPRISE === 'true') {
     TierRestrictionsValidateUsecase,
     ControlValueSanitizerService,
     PayloadMergerService,
-    SchemaBuilderService,
     PreviewPayloadProcessorService,
     MockDataGeneratorService,
     PreviewErrorHandler,
+    TestHttpEndpointUsecase,
   ],
+  exports: [UpsertWorkflowUseCase, SyncToEnvironmentUseCase, GetWorkflowUseCase, DeleteWorkflowUseCase],
 })
 export class WorkflowModule implements NestModule {
   configure(consumer: MiddlewareConsumer): MiddlewareConsumer | void {}

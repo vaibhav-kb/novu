@@ -1,13 +1,13 @@
 import { EmailProviderIdEnum } from '@novu/shared';
 import {
   ChannelTypeEnum,
+  CheckIntegrationResponseEnum,
+  EmailEventStatusEnum,
+  ICheckIntegrationResponse,
+  IEmailEventBody,
   IEmailOptions,
   IEmailProvider,
   ISendMessageSuccessResponse,
-  ICheckIntegrationResponse,
-  CheckIntegrationResponseEnum,
-  IEmailEventBody,
-  EmailEventStatusEnum,
 } from '@novu/stateless';
 import axios, { AxiosInstance } from 'axios';
 import { BaseProvider, CasingEnum } from '../../../base.provider';
@@ -93,6 +93,10 @@ export class NetCoreProvider extends BaseProvider implements IEmailProvider {
       });
     }
 
+    if (options.headers && Object.keys(options.headers).length > 0) {
+      data.personalizations[0].headers = options.headers;
+    }
+
     const emailOptions = {
       method: 'POST',
       url: '/mail/send',
@@ -130,7 +134,6 @@ export class NetCoreProvider extends BaseProvider implements IEmailProvider {
 
   parseEventBody(body: any | any[], identifier: string): IEmailEventBody | undefined {
     if (Array.isArray(body)) {
-      // eslint-disable-next-line no-param-reassign
       body = body.find((item) => item.TRANSID === identifier);
     }
 

@@ -1,9 +1,6 @@
-/* eslint-disable global-require */
-import { Body, Controller, Post, BadRequestException } from '@nestjs/common';
-import { ApiExcludeController } from '@nestjs/swagger';
-import { format } from 'date-fns';
-import i18next from 'i18next';
+import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
+import { ApiExcludeController } from '@nestjs/swagger';
 import {
   CompileEmailTemplate,
   CompileEmailTemplateCommand,
@@ -14,8 +11,11 @@ import {
   PinoLogger,
 } from '@novu/application-generic';
 import { IEmailBlock, IMessageCTA, MessageTemplateContentType, UserSessionData } from '@novu/shared';
-import { UserSession } from '../shared/framework/user.decorator';
+import { format } from 'date-fns';
+import i18next from 'i18next';
 import { RequireAuthentication } from '../auth/framework/auth.decorator';
+import { TRANSLATIONS_SERVICE } from '../shared/constants';
+import { UserSession } from '../shared/framework/user.decorator';
 
 @Controller('/content-templates')
 @RequireAuthentication()
@@ -154,10 +154,10 @@ export class ContentTemplatesController {
   protected async initiateTranslations(environmentId: string, organizationId: string, locale: string | undefined) {
     try {
       if (process.env.NOVU_ENTERPRISE === 'true' || process.env.CI_EE_TEST === 'true') {
-        if (!require('@novu/ee-shared-services')?.TranslationsService) {
+        if (!this.moduleRef.get(TRANSLATIONS_SERVICE, { strict: false })) {
           throw new BadRequestException('Translation module is not loaded');
         }
-        const service = this.moduleRef.get(require('@novu/ee-shared-services')?.TranslationsService, { strict: false });
+        const service = this.moduleRef.get(TRANSLATIONS_SERVICE, { strict: false });
         const { namespaces, resources, defaultLocale } = await service.getTranslationsList(
           environmentId,
           organizationId
@@ -178,7 +178,7 @@ export class ContentTemplatesController {
                 return format(new Date(value), formatting);
               }
 
-              return value.toString();
+              return String(value ?? '');
             },
           },
         });

@@ -1,11 +1,10 @@
 import { Test } from '@nestjs/testing';
-import { expect } from 'chai';
-import { v4 as uuid } from 'uuid';
-
-import { SubscribersService, UserSession } from '@novu/testing';
 import { NotificationTemplateEntity, SubscriberRepository } from '@novu/dal';
 import { AddressingTypeEnum, TriggerRecipients, TriggerRequestCategoryEnum } from '@novu/shared';
 
+import { SubscribersService, UserSession } from '@novu/testing';
+import { expect } from 'chai';
+import { v4 as uuid } from 'uuid';
 import { SharedModule } from '../../../shared/shared.module';
 import { EventsModule } from '../../events.module';
 import { ParseEventRequestCommand, ParseEventRequestMulticastCommand } from './parse-event-request.command';
@@ -20,7 +19,6 @@ describe('ParseEventRequest Usecase - #novu-v2', () => {
   beforeEach(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [SharedModule, EventsModule],
-      providers: [],
     }).compile();
 
     session = new UserSession();
@@ -200,6 +198,35 @@ describe('ParseEventRequest Usecase - #novu-v2', () => {
     expect(command.payload.settings).to.deep.equal({ theme: 'dark', notifications: false }); // Nested defaults should be applied
   });
 
+  it('should tolerate non-standard JSON schema keywords like isRequired', async () => {
+    const transactionId = uuid();
+    const subscriber = await subscribersService.createSubscriber();
+
+    const templateWithCustomKeyword = await session.createTemplate({
+      validatePayload: true,
+      payloadSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', isRequired: true },
+          age: { type: 'number' },
+        },
+        required: ['name'],
+      },
+    });
+
+    const command = buildCommand(
+      session,
+      transactionId,
+      [{ subscriberId: subscriber.subscriberId }],
+      templateWithCustomKeyword.triggers[0].identifier
+    );
+
+    command.payload = { name: 'John Doe', age: 25 };
+
+    const result = await parseEventRequestUsecase.execute(command);
+    expect(result.acknowledged).to.be.true;
+  });
+
   it('should not override provided values with defaults', async () => {
     const transactionId = uuid();
     const subscriber = await subscribersService.createSubscriber();
@@ -255,5 +282,6 @@ const buildCommand = (
     overrides: {},
     addressingType: AddressingTypeEnum.MULTICAST,
     requestCategory: TriggerRequestCategoryEnum.SINGLE,
+    requestId: uuid(),
   });
 };

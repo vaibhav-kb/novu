@@ -1,16 +1,16 @@
-import { JSX, Show, JSXElement } from 'solid-js';
+import { JSXElement } from 'solid-js';
 import { JSX as SolidJSX } from 'solid-js/jsx-runtime';
 import { useArchiveAll, useArchiveAllRead, useReadAll } from '../../../api';
-import { StringLocalizationKey, useInboxContext, useLocalization, useAppearance } from '../../../context';
+import { StringLocalizationKey, useInboxContext, useLocalization } from '../../../context';
 import { cn, useStyle } from '../../../helpers';
 import { MarkAsArchived, MarkAsArchivedRead, MarkAsRead } from '../../../icons';
-import { IconOverrides, IconKey } from '../../../types';
+import { AllIconKey, AllIconOverrides } from '../../../types';
 import { Dropdown, dropdownItemVariants } from '../../primitives';
 import { IconRendererWrapper } from '../../shared/IconRendererWrapper';
 
 type IconComponentType = (props?: SolidJSX.HTMLAttributes<SVGSVGElement>) => JSXElement;
 
-const iconKeyToComponentMap: { [key in keyof IconOverrides]?: IconComponentType } = {
+const iconKeyToComponentMap: { [key in keyof AllIconOverrides]?: IconComponentType } = {
   markAsRead: MarkAsRead,
   markAsArchived: MarkAsArchived,
   markAsArchivedRead: MarkAsArchivedRead,
@@ -46,18 +46,23 @@ export const MoreActionsOptions = () => {
 export const ActionsItem = (props: {
   localizationKey: StringLocalizationKey;
   onClick: () => void;
-  iconKey: IconKey;
+  iconKey: AllIconKey;
 }) => {
   const style = useStyle();
   const { t } = useLocalization();
   const DefaultIconComponent = iconKeyToComponentMap[props.iconKey];
-  const moreActionsIconClass = style('moreActions__dropdownItemLeft__icon', 'nt-size-3', {
+  const moreActionsIconClass = style({
+    key: 'moreActions__dropdownItemLeft__icon',
+    className: 'nt-size-3',
     iconKey: props.iconKey,
   });
 
   return (
     <Dropdown.Item
-      class={style('moreActions__dropdownItem', cn(dropdownItemVariants(), 'nt-flex nt-gap-2'))}
+      class={style({
+        key: 'moreActions__dropdownItem',
+        className: cn(dropdownItemVariants(), 'nt-flex nt-gap-2'),
+      })}
       onClick={props.onClick}
     >
       <IconRendererWrapper
@@ -72,7 +77,10 @@ export const ActionsItem = (props: {
       />
       <span
         data-localization={props.localizationKey}
-        class={style('moreActions__dropdownItemLabel', 'nt-leading-none')}
+        class={style({
+          key: 'moreActions__dropdownItemLabel',
+          className: 'nt-leading-none',
+        })}
       >
         {t(props.localizationKey)}
       </span>

@@ -1,6 +1,6 @@
+import { Logger } from '@nestjs/common';
 import Redis, { ChainableCommander, Cluster, ClusterNode, ClusterOptions } from 'ioredis';
 import { ConnectionOptions } from 'tls';
-import { Logger } from '@nestjs/common';
 
 import { convertStringValues } from './variable-mappers';
 
@@ -49,7 +49,11 @@ export const getRedisClusterProviderConfig = (): IRedisClusterProviderConfig => 
     keepAlive: convertStringValues(process.env.REDIS_CLUSTER_KEEP_ALIVE),
     family: convertStringValues(process.env.REDIS_CLUSTER_FAMILY),
     keyPrefix: convertStringValues(process.env.REDIS_CLUSTER_KEY_PREFIX),
-    tls: process.env.REDIS_CLUSTER_TLS as ConnectionOptions,
+    tls: process.env.REDIS_CLUSTER_TLS
+      ? {
+          servername: convertStringValues(process.env.REDIS_CLUSTER_SERVICE_HOST),
+        }
+      : undefined,
   };
 
   const { host } = redisClusterConfig;
@@ -75,16 +79,22 @@ export const getRedisClusterProviderConfig = (): IRedisClusterProviderConfig => 
     keepAlive,
     keyPrefix,
     ttl,
+    tls: redisClusterConfig.tls,
   };
 };
 
 export const getRedisCluster = (enableAutoPipelining?: boolean): Cluster | undefined => {
-  const { instances } = getRedisClusterProviderConfig();
+  const { instances, password, tls } = getRedisClusterProviderConfig();
 
   const options: ClusterOptions = {
+    dnsLookup: (address, callback) => callback(null, address),
     enableAutoPipelining: enableAutoPipelining ?? false,
     enableOfflineQueue: false,
     enableReadyCheck: true,
+    redisOptions: {
+      ...(tls && { tls }),
+      ...(password && { password }),
+    },
     scaleReads: 'slave',
     /*
      *  Disabled in Prod as affects performance
@@ -107,9 +117,10 @@ export const getRedisCluster = (enableAutoPipelining?: boolean): Cluster | undef
 export const validateRedisClusterProviderConfig = (): boolean => {
   const config = getRedisClusterProviderConfig();
 
-  const validPorts = config.ports.length > 0 && config.ports.every((port: number) => Number.isInteger(port));
+  const validPorts =
+    config.ports && config.ports.length > 0 && config.ports.every((port: number) => Number.isInteger(port));
 
-  return !!config.host && validPorts;
+  return !!config.host && !!validPorts;
 };
 
 export const isClientReady = (status: string): boolean => status === CLIENT_READY;

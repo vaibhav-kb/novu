@@ -1,22 +1,21 @@
+import { standardSchemaResolver } from '@hookform/resolvers/standard-schema';
 import { useCallback, useEffect } from 'react';
-import { useForm, useFieldArray } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-
-import type { JSONSchema7, JSONSchema7TypeName } from './json-schema';
-import {
-  editorSchema,
-  type SchemaEditorFormValues,
-  type PropertyListItem,
-  convertSchemaToPropertyList,
-  convertPropertyListToSchema,
-  parsePropertyPath,
-  createPropertyItem,
-  findOrCreatePropertyPath,
-  propertyExists,
-  type PropertyData,
-} from './utils';
-import type { UseSchemaFormProps, UseSchemaFormReturn, SchemaFormPath } from './types';
+import { useFieldArray, useForm } from 'react-hook-form';
 import { MAX_NESTING_DEPTH } from './constants';
+import type { JSONSchema7, JSONSchema7TypeName } from './json-schema';
+import type { SchemaFormPath, UseSchemaFormProps, UseSchemaFormReturn } from './types';
+import {
+  convertPropertyListToSchema,
+  convertSchemaToPropertyList,
+  createPropertyItem,
+  editorSchema,
+  findOrCreatePropertyPath,
+  type PropertyData,
+  type PropertyListItem,
+  parsePropertyPath,
+  propertyExists,
+  type SchemaEditorFormValues,
+} from './utils';
 
 const defaultFormValues: SchemaEditorFormValues = {
   propertyList: [],
@@ -33,8 +32,9 @@ export function useSchemaForm({ initialSchema, onChange, onValidityChange }: Use
 
   const methods = useForm<SchemaEditorFormValues>({
     defaultValues: initialTransformedValues,
-    resolver: zodResolver(editorSchema),
-    mode: 'all',
+    resolver: standardSchemaResolver(editorSchema),
+    mode: 'onBlur',
+    reValidateMode: 'onChange',
   });
 
   const { control, watch, formState, getValues, setValue } = methods;
@@ -118,6 +118,16 @@ export function useSchemaForm({ initialSchema, onChange, onValidityChange }: Use
     return createSchemaFromPropertyList(propertyList);
   }, [getValues]);
 
+  const resetToSchema = useCallback(
+    (schema: JSONSchema7) => {
+      const propertyList = schema?.properties
+        ? convertSchemaToPropertyList(schema.properties, schema.required)
+        : defaultFormValues.propertyList;
+      methods.reset({ propertyList });
+    },
+    [methods]
+  );
+
   return {
     control,
     fields,
@@ -130,6 +140,7 @@ export function useSchemaForm({ initialSchema, onChange, onValidityChange }: Use
       methods.setValue(name, value);
     },
     methods,
+    resetToSchema,
   };
 }
 

@@ -1,4 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  buildFeedKey,
+  buildMessageCountKey,
+  CreateExecutionDetails,
+  CreateExecutionDetailsCommand,
+  DetailEnum,
+  InvalidateCacheService,
+  PlatformException,
+  WebSocketsQueueService,
+} from '@novu/application-generic';
 import { JobRepository, MessageRepository } from '@novu/dal';
 import {
   ChannelTypeEnum,
@@ -6,16 +16,6 @@ import {
   ExecutionDetailsStatusEnum,
   WebSocketEventEnum,
 } from '@novu/shared';
-import {
-  CreateExecutionDetailsCommand,
-  CreateExecutionDetails,
-  DetailEnum,
-  WebSocketsQueueService,
-  PlatformException,
-  buildFeedKey,
-  buildMessageCountKey,
-  InvalidateCacheService,
-} from '@novu/application-generic';
 import { ProcessUnsnoozeJobCommand } from './process-unsnooze-job.command';
 
 @Injectable()
@@ -85,6 +85,7 @@ export class ProcessUnsnoozeJob {
             event: WebSocketEventEnum.RECEIVED,
             userId: job._subscriberId,
             _environmentId: job._environmentId,
+            contextKeys: snoozedNotification.contextKeys ?? [],
             payload: {
               messageId: snoozedNotification._id,
             },
@@ -94,12 +95,6 @@ export class ProcessUnsnoozeJob {
             removeOnFail: true,
           },
           groupId: job._organizationId,
-        }),
-        this.invalidateCache.invalidateQuery({
-          key: buildFeedKey().invalidate({
-            subscriberId: job.subscriberId,
-            _environmentId: job._environmentId,
-          }),
         }),
         this.invalidateCache.invalidateQuery({
           key: buildMessageCountKey().invalidate({

@@ -2,13 +2,12 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 
 import { ChangeRepository, MessageRepository, MessageTemplateEntity, MessageTemplateRepository } from '@novu/dal';
 import { ChangeEntityTypeEnum, isBridgeWorkflow } from '@novu/shared';
-
-import { UpdateMessageTemplateCommand } from './update-message-template.command';
+import { sanitizeMessageContentV0 } from '../../../services';
+import { normalizeVariantDefault } from '../../../utils';
 import { CreateChange, CreateChangeCommand } from '../../create-change';
 import { UpdateChange, UpdateChangeCommand } from '../../update-change';
-import { normalizeVariantDefault } from '../../../utils';
 import { shouldSanitize } from '../shared';
-import { sanitizeMessageContentV0 } from '../../../services';
+import { UpdateMessageTemplateCommand } from './update-message-template.command';
 
 @Injectable()
 export class UpdateMessageTemplate {
@@ -37,8 +36,14 @@ export class UpdateMessageTemplate {
       updatePayload.name = command.name;
     }
 
+    const effectiveTemplateType = command.type !== undefined ? command.type : existingTemplate.type;
+
+    if (command.type !== undefined && command.type !== existingTemplate.type) {
+      updatePayload.type = command.type;
+    }
+
     if (command.content !== null || command.content !== undefined) {
-      updatePayload.content = shouldSanitize(existingTemplate.type, command.contentType)
+      updatePayload.content = shouldSanitize(effectiveTemplateType, command.contentType)
         ? sanitizeMessageContentV0(command.content)
         : command.content;
     }

@@ -2,7 +2,7 @@ import { cva, VariantProps } from 'class-variance-authority';
 import { splitProps } from 'solid-js';
 import { JSX } from 'solid-js/jsx-runtime';
 import { cn, useStyle } from '../../helpers';
-import type { AppearanceKey } from '../../types';
+import type { AllAppearanceKey } from '../../types';
 
 export const inputVariants = cva(
   cn(
@@ -16,6 +16,7 @@ export const inputVariants = cva(
       size: {
         default: 'nt-h-9',
         sm: 'nt-h-8 nt-text-sm',
+        xs: 'nt-h-7 nt-text-xs',
       },
     },
     defaultVariants: {
@@ -25,7 +26,7 @@ export const inputVariants = cva(
   }
 );
 
-type InputProps = JSX.IntrinsicElements['input'] & { appearanceKey?: AppearanceKey } & VariantProps<
+type InputProps = JSX.IntrinsicElements['input'] & { appearanceKey?: AllAppearanceKey } & VariantProps<
     typeof inputVariants
   >;
 export const Input = (props: InputProps) => {
@@ -36,10 +37,10 @@ export const Input = (props: InputProps) => {
     <input
       data-variant={props.variant}
       data-size={props.size}
-      class={style(
-        local.appearanceKey || 'input',
-        cn(inputVariants({ variant: props.variant, size: props.size }), local.class)
-      )}
+      class={style({
+        key: local.appearanceKey || 'input',
+        className: cn(inputVariants({ variant: props.variant, size: props.size }), local.class),
+      })}
       {...rest}
     />
   );

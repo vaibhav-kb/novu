@@ -1,7 +1,7 @@
-import { cn } from '@/utils/ui';
 import { useRef, useState } from 'react';
 import { RiArrowDownSLine, RiCheckLine, RiSearchLine, RiTimeLine } from 'react-icons/ri';
 import { useTimezoneSelect } from 'react-timezone-select';
+import { cn } from '@/utils/ui';
 import { Button, ButtonProps } from '../primitives/button';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '../primitives/command';
 import { Popover, PopoverContent, PopoverTrigger } from '../primitives/popover';
@@ -18,16 +18,19 @@ export function TimezoneSelect(props: TimezoneSelectProps) {
   const { value, disabled, readOnly, onChange, className, ...rest } = props;
   const [open, setOpen] = useState(false);
   const { options, parseTimezone } = useTimezoneSelect({ labelStyle: 'abbrev', displayValue: 'UTC' });
-  const listRef = useRef<HTMLDivElement>(null);
-  const scrollId = useRef<ReturnType<typeof setTimeout>>();
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const scrollId = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   return (
-    <Popover modal={true} open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           variant="secondary"
           mode="outline"
-          className={cn('flex h-8 w-full items-center gap-1 truncate rounded-lg px-3 focus:z-10', className)}
+          className={cn(
+            'flex h-8 w-full items-center gap-1 truncate rounded-lg px-3 focus:z-10 focus-visible:shadow-none',
+            className
+          )}
           disabled={disabled}
           {...rest}
         >
@@ -37,7 +40,7 @@ export function TimezoneSelect(props: TimezoneSelectProps) {
             </div>
             {value ? (
               <TruncatedText className="text-foreground w-full min-w-0 flex-1 text-xs font-normal text-neutral-950">
-                {parseTimezone(value).label}
+                {parseTimezone(value)?.label ?? value}
               </TruncatedText>
             ) : (
               <TruncatedText className="w-full min-w-0 flex-1 text-xs font-normal text-neutral-400">
@@ -50,18 +53,21 @@ export function TimezoneSelect(props: TimezoneSelectProps) {
           </div>
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[300px] rounded-lg p-0">
+      <PopoverContent portal={false} className="w-[300px] rounded-lg p-0" side="bottom" align="start">
         <Command>
           <CommandInput
             placeholder="Search timezone..."
-            inputRootClassName="rounded-b-none before:ring-0 before:border-b has-[input:focus]:shadow-none focus-within:shadow-none px-1.5"
+            inputRootClassName="rounded-b-none before:ring-0 before:border-b before:border-gray-200 has-[input:focus]:shadow-none focus-within:shadow-none"
             inlineLeadingNode={<RiSearchLine className="size-4 text-neutral-400" />}
+            autoComplete="off"
             /**
              * Scroll to top bug workaround: https://github.com/pacocoursey/cmdk/issues/233#issuecomment-2015998940
              */
             onValueChange={() => {
-              // clear pending scroll
-              clearTimeout(scrollId.current);
+              if (scrollId.current) {
+                // clear pending scroll
+                clearTimeout(scrollId.current);
+              }
 
               // the setTimeout is used to create a new task
               // this is to make sure that we don't scroll until the user is done typing

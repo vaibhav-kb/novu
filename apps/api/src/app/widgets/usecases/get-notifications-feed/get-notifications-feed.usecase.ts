@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { ActorTypeEnum, ChannelTypeEnum } from '@novu/shared';
 import {
   AnalyticsService,
   buildFeedKey,
@@ -9,9 +8,9 @@ import {
   InstrumentUsecase,
 } from '@novu/application-generic';
 import { MessageRepository, SubscriberEntity, SubscriberRepository } from '@novu/dal';
-
-import { GetNotificationsFeedCommand } from './get-notifications-feed.command';
+import { ActorTypeEnum, ChannelTypeEnum } from '@novu/shared';
 import { FeedResponseDto } from '../../dtos/feeds-response.dto';
+import { GetNotificationsFeedCommand } from './get-notifications-feed.command';
 
 @Injectable()
 export class GetNotificationsFeed {
@@ -34,14 +33,6 @@ export class GetNotificationsFeed {
   }
 
   @InstrumentUsecase()
-  @CachedQuery({
-    builder: ({ environmentId, subscriberId, ...command }: GetNotificationsFeedCommand) =>
-      buildFeedKey().cache({
-        environmentId,
-        subscriberId,
-        ...command,
-      }),
-  })
   async execute(command: GetNotificationsFeedCommand): Promise<FeedResponseDto> {
     const payload = this.getPayloadObject(command.payload);
 

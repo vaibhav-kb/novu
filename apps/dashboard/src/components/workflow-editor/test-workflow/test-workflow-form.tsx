@@ -1,4 +1,11 @@
+import type { WorkflowResponseDto } from '@novu/shared';
+import { loadLanguage } from '@uiw/codemirror-extensions-langs';
+import { useCallback, useMemo, useState } from 'react';
+import { useFormContext, useWatch } from 'react-hook-form';
+import { FaCode } from 'react-icons/fa6';
+import { RiSendPlaneFill } from 'react-icons/ri';
 import { Editor } from '@/components/primitives/editor';
+import { useIsPayloadSchemaEnabled } from '@/hooks/use-is-payload-schema-enabled';
 import {
   type CodeSnippet,
   createCurlSnippet,
@@ -8,14 +15,8 @@ import {
   createPhpSnippet,
   createPythonSnippet,
 } from '@/utils/code-snippets';
-import { WorkflowOriginEnum } from '@/utils/enums';
+import { ResourceOriginEnum } from '@/utils/enums';
 import { capitalize } from '@/utils/string';
-import type { WorkflowResponseDto } from '@novu/shared';
-import { loadLanguage } from '@uiw/codemirror-extensions-langs';
-import { useCallback, useMemo, useState } from 'react';
-import { useFormContext, useWatch } from 'react-hook-form';
-import { FaCode } from 'react-icons/fa6';
-import { RiSendPlaneFill } from 'react-icons/ri';
 import { Code2 } from '../../icons/code-2';
 import { Button } from '../../primitives/button';
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from '../../primitives/form/form';
@@ -23,11 +24,10 @@ import { Input } from '../../primitives/input';
 import { Panel, PanelContent, PanelHeader } from '../../primitives/panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../primitives/tabs';
 import { TestWorkflowFormType } from '../schema';
+import { EditableJsonViewer } from '../steps/shared/editable-json-viewer/editable-json-viewer';
 import { SnippetEditor } from './snippet-editor';
 import { TestWorkflowInstructions } from './test-workflow-instructions';
 import { SnippetLanguage } from './types';
-import { useIsPayloadSchemaEnabled } from '@/hooks/use-is-payload-schema-enabled';
-import { EditableJsonViewer } from '../steps/shared/editable-json-viewer/editable-json-viewer';
 
 const tabsTriggerClassName = 'pt-1';
 const codePanelClassName = 'h-full';
@@ -47,7 +47,7 @@ const extensions = [loadLanguage('json')?.extension ?? []];
 export const TestWorkflowForm = ({ workflow }: { workflow?: WorkflowResponseDto }) => {
   const { control, setValue } = useFormContext<TestWorkflowFormType>();
   const [activeSnippetTab, setActiveSnippetTab] = useState<SnippetLanguage>(() =>
-    workflow?.origin === WorkflowOriginEnum.EXTERNAL ? 'framework' : 'typescript'
+    workflow?.origin === ResourceOriginEnum.EXTERNAL ? 'framework' : 'typescript'
   );
   const [showInstructions, setShowInstructions] = useState(false);
   const [payloadJsonData, setPayloadJsonData] = useState<any>({});
@@ -57,16 +57,16 @@ export const TestWorkflowForm = ({ workflow }: { workflow?: WorkflowResponseDto 
   const identifier = workflow?.workflowId ?? '';
   const snippetValue = useMemo(() => {
     const snippetUtil = LANGUAGE_TO_SNIPPET_UTIL[activeSnippetTab];
-    return snippetUtil({ identifier, to, payload });
+    return snippetUtil({ identifier, to: to as Record<string, unknown>, payload: (payload ?? '') as string });
   }, [activeSnippetTab, identifier, to, payload]);
 
   // Parse JSON data for JsonViewer and initialize with workflow payloadExample if available
   useMemo(() => {
     if (isPayloadSchemaEnabled) {
       try {
-        const parsed = JSON.parse(payload || '{}');
+        const parsed = JSON.parse((payload as string) || '{}');
         setPayloadJsonData(parsed);
-      } catch (error) {
+      } catch {
         // If parsing fails and we have a workflow payloadExample, use it as fallback
         if (workflow?.payloadExample) {
           setPayloadJsonData(workflow.payloadExample);
@@ -126,7 +126,7 @@ export const TestWorkflowForm = ({ workflow }: { workflow?: WorkflowResponseDto 
               <FormField
                 control={control}
                 name="payload"
-                render={({ field: { ref: _ref, ...restField } }) => (
+                render={({ field: { ref: _ref, value, ...restField } }) => (
                   <FormItem className="flex flex-1 flex-col gap-2 overflow-auto">
                     <FormControl>
                       <>
@@ -144,6 +144,7 @@ export const TestWorkflowForm = ({ workflow }: { workflow?: WorkflowResponseDto 
                             extensions={extensions}
                             className="overflow-auto"
                             {...restField}
+                            value={value as string}
                             multiline
                           />
                         )}
@@ -215,8 +216,8 @@ export const TestWorkflowForm = ({ workflow }: { workflow?: WorkflowResponseDto 
         isOpen={showInstructions}
         onClose={() => setShowInstructions(false)}
         workflow={workflow}
-        to={to}
-        payload={payload}
+        to={(to ?? {}) as Record<string, string>}
+        payload={(payload ?? '') as string | Record<string, unknown>}
       />
     </>
   );

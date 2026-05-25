@@ -1,3 +1,7 @@
+import merge from 'lodash.merge';
+import { ComponentProps } from 'react';
+import { useFormContext, useWatch } from 'react-hook-form';
+import { RiEdit2Line, RiExpandUpDownLine, RiForbid2Line } from 'react-icons/ri';
 import { Button } from '@/components/primitives/button';
 import {
   DropdownMenu,
@@ -15,18 +19,14 @@ import {
 } from '@/components/primitives/form/form';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/primitives/popover';
 import { Separator } from '@/components/primitives/separator';
+import { ControlInput } from '@/components/workflow-editor/control-input';
 import { URLInput } from '@/components/workflow-editor/url-input';
 import { useWorkflow } from '@/components/workflow-editor/workflow-provider';
 import { useParseVariables } from '@/hooks/use-parse-variables';
 import { inboxButtonVariants } from '@/utils/inbox';
 import { cn } from '@/utils/ui';
 import { urlTargetTypes } from '@/utils/url';
-import merge from 'lodash.merge';
-import { ComponentProps } from 'react';
-import { useFormContext, useWatch } from 'react-hook-form';
-import { RiEdit2Line, RiExpandUpDownLine, RiForbid2Line } from 'react-icons/ri';
 import { CompactButton } from './primitives/button-compact';
-import { ControlInput } from './primitives/control-input';
 import { InputRoot } from './primitives/input';
 
 const primaryActionKey = 'primaryAction';
@@ -59,7 +59,7 @@ export const InAppActionDropdown = ({ onMenuItemClick }: { onMenuItemClick?: () 
                 size="2xs"
                 className={inboxButtonVariants({
                   variant: 'secondary',
-                  className: 'border-[1px] border-dashed shadow-none ring-0',
+                  className: 'border border-dashed shadow-none ring-0',
                 })}
                 trailingIcon={RiForbid2Line}
                 tabIndex={-1}
@@ -127,7 +127,7 @@ export const InAppActionDropdown = ({ onMenuItemClick }: { onMenuItemClick?: () 
               size="2xs"
               className={inboxButtonVariants({
                 variant: 'secondary',
-                className: 'h-6 border-[1px] border-dashed shadow-none ring-0',
+                className: 'h-6 border border-dashed shadow-none ring-0',
               })}
               trailingIcon={RiForbid2Line}
             >
@@ -237,6 +237,7 @@ const ConfigureActionPopover = (
                       placeholder={title}
                       value={field.value}
                       onChange={field.onChange}
+                      enableTranslations
                     />
                   </InputRoot>
                 </FormControl>

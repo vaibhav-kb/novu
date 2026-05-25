@@ -1,61 +1,91 @@
-import '@maily-to/core/style.css';
+import '@novu/maily-core/style.css';
+import { PermissionsEnum } from '@novu/shared';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import { createBrowserRouter, Navigate, Outlet, RouterProvider } from 'react-router-dom';
 import './index.css';
-import { Navigate } from 'react-router-dom';
-import { PermissionsEnum } from '@novu/shared';
 
 import { ConfigureWorkflow } from '@/components/workflow-editor/configure-workflow';
 import { EditStepConditions } from '@/components/workflow-editor/steps/conditions/edit-step-conditions';
 import { ConfigureStep } from '@/components/workflow-editor/steps/configure-step';
-import { ConfigureStepTemplate } from '@/components/workflow-editor/steps/configure-step-template';
+
 import {
   ActivityFeed,
+  AnalyticsPage,
   ApiKeysPage,
+  CreateLayoutPage,
   CreateWorkflowPage,
-  LayoutsPage,
   ErrorPage,
   IntegrationsListPage,
+  InvitationAcceptPage,
+  LayoutsPage,
   OrganizationListPage,
-  QuestionnairePage,
   SettingsPage,
   SignInPage,
   SignUpPage,
+  SSOSignInPage,
   TemplateModal,
-  UsecaseSelectPage,
+  TranslationsPage,
+  VerifyEmailPage,
   WelcomePage,
   WorkflowsPage,
 } from '@/pages';
+import {
+  DispatchAgentsPage,
+  DispatchApiKeysPage,
+  DispatchConversationsPage,
+  DispatchDashboardPage,
+  DispatchSettingsPage,
+} from '@/pages/dispatch';
 import { DuplicateWorkflowPage } from '@/pages/duplicate-workflow';
+import { EditStepTemplateV2Page } from '@/pages/edit-step-template-v2';
+import { Landing1SignUpPage } from '@/pages/landing-1-signup';
 import { SubscribersPage } from '@/pages/subscribers';
+import { TranslationSettingsPage } from '@/pages/translation-settings-page';
 import { WebhooksPage } from '@/pages/webhooks-page';
 import { CreateIntegrationSidebar } from './components/integrations/components/create-integration-sidebar';
 import { UpdateIntegrationSidebar } from './components/integrations/components/update-integration-sidebar';
 import { ChannelPreferences } from './components/workflow-editor/channel-preferences';
+import { IS_ENTERPRISE, IS_SELF_HOSTED } from './config';
 import { FeatureFlagsProvider } from './context/feature-flags-provider';
+import { AgentDetailsPage } from './pages/agent-details';
+import { AgentsPage } from './pages/agents';
+import { AgentsSetupPage } from './pages/agents-setup-page';
+import { AgentsUsecasePage } from './pages/agents-usecase-page';
+import { ContextsPage } from './pages/contexts';
+import { CreateContextPage } from './pages/create-context';
 import { CreateSubscriberPage } from './pages/create-subscriber';
 import { CreateTopicPage } from './pages/create-topic';
+import { DomainDetailPage } from './pages/domain-detail';
+import { DomainsPage } from './pages/domains';
+import { DuplicateLayoutPage } from './pages/duplicate-layout-page';
+import { EditContextPage } from './pages/edit-context';
+import { EditLayoutPage } from './pages/edit-layout';
 import { EditSubscriberPage } from './pages/edit-subscriber-page';
 import { EditTopicPage } from './pages/edit-topic';
+import { EditTranslationPage } from './pages/edit-translation';
 import { EditWorkflowPage } from './pages/edit-workflow';
 import { EnvironmentsPage } from './pages/environments';
+import { ForgotPasswordPage } from './pages/forgot-password';
 import { InboxEmbedPage } from './pages/inbox-embed-page';
 import { InboxEmbedSuccessPage } from './pages/inbox-embed-success-page';
 import { InboxUsecasePage } from './pages/inbox-usecase-page';
 import { RedirectToLegacyStudioAuth } from './pages/redirect-to-legacy-studio-auth';
-import { TestWorkflowRouteHandler } from './pages/test-workflow-route-handler';
+import { ResetPasswordPage } from './pages/reset-password';
 import { TestWorkflowDrawerPage } from './pages/test-workflow-drawer-page';
+import { TestWorkflowRouteHandler } from './pages/test-workflow-route-handler';
 import { TopicsPage } from './pages/topics';
+import { UpsertVariablePage } from './pages/upsert-variable';
+import { UsecaseSelectPage } from './pages/usecase-select-page';
+import { VariablesPage } from './pages/variables';
 import { VercelIntegrationPage } from './pages/vercel-integration-page';
-import { AuthRoute, CatchAllRoute, DashboardRoute, RootRoute } from './routes';
+import { AuthRoute, CatchAllRoute, DashboardRoute, ProtectedAuthRoute, RootRoute } from './routes';
+import { DispatchProtectedRoute } from './routes/dispatch-protected-route';
 import { OnboardingParentRoute } from './routes/onboarding';
+import { ProtectedRoute } from './routes/protected-route';
 import { ROUTES } from './utils/routes';
 import { initializeSentry } from './utils/sentry';
 import { overrideZodErrorMap } from './utils/validation';
-import { IS_SELF_HOSTED } from './config';
-import { ProtectedRoute } from './routes/protected-route';
-import { EditStepTemplateV2Page } from '@/pages/edit-step-template-v2';
 
 initializeSentry();
 overrideZodErrorMap();
@@ -65,6 +95,10 @@ const router = createBrowserRouter([
     element: <RootRoute />,
     errorElement: <ErrorPage />,
     children: [
+      {
+        path: `${ROUTES.LANDING_1_SIGN_UP}/*`,
+        element: <Landing1SignUpPage />,
+      },
       {
         element: <AuthRoute />,
         children: [
@@ -77,26 +111,51 @@ const router = createBrowserRouter([
             element: <SignUpPage />,
           },
           {
+            path: ROUTES.FORGOT_PASSWORD,
+            element: <ForgotPasswordPage />,
+          },
+          {
+            path: ROUTES.RESET_PASSWORD,
+            element: <ResetPasswordPage />,
+          },
+          {
+            path: ROUTES.SSO_SIGN_IN,
+            element: <SSOSignInPage />,
+          },
+          {
+            path: ROUTES.VERIFY_EMAIL,
+            element: <VerifyEmailPage />,
+          },
+        ],
+      },
+      {
+        element: <ProtectedAuthRoute />,
+        children: [
+          {
             path: ROUTES.SIGNUP_ORGANIZATION_LIST,
             element: <OrganizationListPage />,
+          },
+          {
+            path: ROUTES.INVITATION_ACCEPT,
+            element: <InvitationAcceptPage />,
           },
         ],
       },
       {
         path: '/onboarding',
-        element: (
-          <ProtectedRoute permission={PermissionsEnum.ORG_METADATA_WRITE}>
-            <OnboardingParentRoute />
-          </ProtectedRoute>
-        ),
+        element: <OnboardingParentRoute />,
         children: [
-          {
-            path: ROUTES.SIGNUP_QUESTIONNAIRE,
-            element: <QuestionnairePage />,
-          },
           {
             path: ROUTES.USECASE_SELECT,
             element: <UsecaseSelectPage />,
+          },
+          {
+            path: ROUTES.AGENTS_USECASE,
+            element: <AgentsUsecasePage />,
+          },
+          {
+            path: ROUTES.AGENTS_SETUP,
+            element: <AgentsSetupPage />,
           },
           {
             path: ROUTES.INBOX_USECASE,
@@ -118,6 +177,10 @@ const router = createBrowserRouter([
         children: [
           /* Direct routes matching environment-specific paths (e.g., /topics -> /env/:envId/topics) 
              will be automatically redirected by the CatchAllRoute component */
+          {
+            index: true,
+            element: <CatchAllRoute />,
+          },
           {
             path: ROUTES.ENV,
             children: [
@@ -228,12 +291,127 @@ const router = createBrowserRouter([
                 ],
               },
               {
+                path: ROUTES.CONTEXTS,
+                element: (
+                  <ProtectedRoute permission={PermissionsEnum.WORKFLOW_READ}>
+                    <ContextsPage />
+                  </ProtectedRoute>
+                ),
+                children: [
+                  {
+                    path: ROUTES.CONTEXTS_CREATE,
+                    element: (
+                      <ProtectedRoute permission={PermissionsEnum.WORKFLOW_WRITE} isDrawerRoute>
+                        <CreateContextPage />
+                      </ProtectedRoute>
+                    ),
+                  },
+                  {
+                    path: ROUTES.CONTEXTS_EDIT,
+                    element: (
+                      <ProtectedRoute permission={PermissionsEnum.WORKFLOW_READ} isDrawerRoute>
+                        <EditContextPage />
+                      </ProtectedRoute>
+                    ),
+                  },
+                ],
+              },
+              {
                 path: ROUTES.LAYOUTS,
                 element: (
-                  <ProtectedRoute permission={PermissionsEnum.LAYOUT_READ}>
+                  <ProtectedRoute permission={PermissionsEnum.WORKFLOW_READ}>
                     <LayoutsPage />
                   </ProtectedRoute>
                 ),
+                children: [
+                  {
+                    path: ROUTES.LAYOUTS_CREATE,
+                    element: (
+                      <ProtectedRoute permission={PermissionsEnum.WORKFLOW_WRITE} isDrawerRoute>
+                        <CreateLayoutPage />
+                      </ProtectedRoute>
+                    ),
+                  },
+                  {
+                    path: ROUTES.LAYOUTS_DUPLICATE,
+                    element: (
+                      <ProtectedRoute permission={PermissionsEnum.WORKFLOW_WRITE} isDrawerRoute>
+                        <DuplicateLayoutPage />
+                      </ProtectedRoute>
+                    ),
+                  },
+                ],
+              },
+              {
+                path: ROUTES.LAYOUTS_EDIT,
+                element: (
+                  <ProtectedRoute permission={PermissionsEnum.WORKFLOW_READ}>
+                    <EditLayoutPage />
+                  </ProtectedRoute>
+                ),
+              },
+              {
+                path: ROUTES.TRANSLATIONS,
+                element: (
+                  <ProtectedRoute permission={PermissionsEnum.WORKFLOW_READ}>
+                    <TranslationsPage />
+                  </ProtectedRoute>
+                ),
+                children: [
+                  {
+                    path: ROUTES.TRANSLATION_SETTINGS,
+                    element: (
+                      <ProtectedRoute permission={PermissionsEnum.WORKFLOW_READ}>
+                        <TranslationSettingsPage />
+                      </ProtectedRoute>
+                    ),
+                  },
+                  {
+                    path: ROUTES.TRANSLATIONS_EDIT,
+                    element: (
+                      <ProtectedRoute permission={PermissionsEnum.WORKFLOW_READ}>
+                        <EditTranslationPage />
+                      </ProtectedRoute>
+                    ),
+                  },
+                ],
+              },
+              {
+                path: ROUTES.AGENTS,
+                element: <AgentsPage />,
+              },
+              {
+                path: ROUTES.AGENT_DETAILS_INTEGRATIONS_DETAIL,
+                element: (
+                  <ProtectedRoute permission={PermissionsEnum.AGENT_READ}>
+                    <AgentDetailsPage />
+                  </ProtectedRoute>
+                ),
+              },
+              {
+                path: ROUTES.AGENT_DETAILS_TAB,
+                element: (
+                  <ProtectedRoute permission={PermissionsEnum.AGENT_READ}>
+                    <AgentDetailsPage />
+                  </ProtectedRoute>
+                ),
+              },
+              {
+                path: ROUTES.AGENT_DETAILS,
+                element: (
+                  <ProtectedRoute permission={PermissionsEnum.AGENT_READ}>
+                    <AgentDetailsPage />
+                  </ProtectedRoute>
+                ),
+              },
+              {
+                path: ROUTES.DOMAINS,
+                element: !IS_SELF_HOSTED || IS_ENTERPRISE ? <DomainsPage /> : <Navigate to={ROUTES.ROOT} replace />,
+              },
+              {
+                path: ROUTES.DOMAIN_DETAIL,
+                element:
+                  !IS_SELF_HOSTED || IS_ENTERPRISE ? <DomainDetailPage /> : <Navigate to={ROUTES.ROOT} replace />,
               },
               {
                 path: ROUTES.API_KEYS,
@@ -248,10 +426,56 @@ const router = createBrowserRouter([
                 element: <EnvironmentsPage />,
               },
               {
+                path: ROUTES.VARIABLES,
+                element: <VariablesPage />,
+                children: [
+                  {
+                    path: ROUTES.VARIABLES_CREATE,
+                    element: (
+                      <ProtectedRoute permission={PermissionsEnum.ORG_SETTINGS_WRITE} isDrawerRoute>
+                        <UpsertVariablePage />
+                      </ProtectedRoute>
+                    ),
+                  },
+                ],
+              },
+              {
                 path: ROUTES.ACTIVITY_FEED,
                 element: (
                   <ProtectedRoute permission={PermissionsEnum.NOTIFICATION_READ}>
                     <ActivityFeed />
+                  </ProtectedRoute>
+                ),
+              },
+              {
+                path: ROUTES.ACTIVITY_WORKFLOW_RUNS,
+                element: (
+                  <ProtectedRoute permission={PermissionsEnum.NOTIFICATION_READ}>
+                    <ActivityFeed />
+                  </ProtectedRoute>
+                ),
+              },
+              {
+                path: ROUTES.ACTIVITY_REQUESTS,
+                element: (
+                  <ProtectedRoute permission={PermissionsEnum.NOTIFICATION_READ}>
+                    <ActivityFeed />
+                  </ProtectedRoute>
+                ),
+              },
+              {
+                path: ROUTES.ACTIVITY_CONVERSATIONS,
+                element: (
+                  <ProtectedRoute permission={PermissionsEnum.NOTIFICATION_READ}>
+                    <ActivityFeed />
+                  </ProtectedRoute>
+                ),
+              },
+              {
+                path: ROUTES.ANALYTICS,
+                element: (
+                  <ProtectedRoute permission={PermissionsEnum.NOTIFICATION_READ}>
+                    <AnalyticsPage />
                   </ProtectedRoute>
                 ),
               },
@@ -271,13 +495,10 @@ const router = createBrowserRouter([
                     element: <ConfigureStep />,
                     path: ROUTES.EDIT_STEP,
                   },
-                  {
-                    element: <ConfigureStepTemplate />,
-                    path: ROUTES.EDIT_STEP_TEMPLATE,
-                  },
+
                   {
                     element: <EditStepTemplateV2Page />,
-                    path: ROUTES.EDIT_STEP_TEMPLATE_V2,
+                    path: ROUTES.EDIT_STEP_TEMPLATE,
                   },
                   {
                     element: <EditStepConditions />,
@@ -378,6 +599,21 @@ const router = createBrowserRouter([
                   </ProtectedRoute>
                 ),
               },
+              {
+                path: ROUTES.DISPATCH_HOME,
+                element: (
+                  <DispatchProtectedRoute>
+                    <Outlet />
+                  </DispatchProtectedRoute>
+                ),
+                children: [
+                  { index: true, element: <DispatchDashboardPage /> },
+                  { path: 'agents', element: <DispatchAgentsPage /> },
+                  { path: 'conversations', element: <DispatchConversationsPage /> },
+                  { path: 'api-keys', element: <DispatchApiKeysPage /> },
+                  { path: 'settings', element: <DispatchSettingsPage /> },
+                ],
+              },
 
               {
                 path: '*',
@@ -435,19 +671,19 @@ const router = createBrowserRouter([
           },
           {
             path: ROUTES.SETTINGS,
-            element: IS_SELF_HOSTED ? <Navigate to={ROUTES.ROOT} /> : <SettingsPage />,
+            element: IS_SELF_HOSTED && !IS_ENTERPRISE ? <Navigate to={ROUTES.ROOT} /> : <SettingsPage />,
           },
           {
             path: ROUTES.SETTINGS_ACCOUNT,
-            element: IS_SELF_HOSTED ? <Navigate to={ROUTES.ROOT} /> : <SettingsPage />,
+            element: IS_SELF_HOSTED && !IS_ENTERPRISE ? <Navigate to={ROUTES.ROOT} /> : <SettingsPage />,
           },
           {
             path: ROUTES.SETTINGS_ORGANIZATION,
-            element: IS_SELF_HOSTED ? <Navigate to={ROUTES.ROOT} /> : <SettingsPage />,
+            element: IS_SELF_HOSTED && !IS_ENTERPRISE ? <Navigate to={ROUTES.ROOT} /> : <SettingsPage />,
           },
           {
             path: ROUTES.SETTINGS_TEAM,
-            element: IS_SELF_HOSTED ? <Navigate to={ROUTES.ROOT} /> : <SettingsPage />,
+            element: IS_SELF_HOSTED && !IS_ENTERPRISE ? <Navigate to={ROUTES.ROOT} /> : <SettingsPage />,
           },
           {
             path: ROUTES.SETTINGS_BILLING,
@@ -467,7 +703,11 @@ const router = createBrowserRouter([
   },
 ]);
 
-createRoot(document.getElementById('root')!).render(
+const rootElement = document.getElementById('root');
+
+if (!rootElement) throw new Error('Root element not found');
+
+createRoot(rootElement).render(
   <StrictMode>
     <FeatureFlagsProvider>
       <RouterProvider router={router} />

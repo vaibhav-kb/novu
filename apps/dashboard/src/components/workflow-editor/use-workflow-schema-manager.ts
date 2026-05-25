@@ -1,13 +1,13 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
-import type { UseFormReturn, Control, FieldArrayWithId } from 'react-hook-form';
+import type { IEnvironment, PatchWorkflowDto, WorkflowResponseDto } from '@novu/shared';
 import { useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Control, FieldArrayWithId, UseFormReturn } from 'react-hook-form';
+import type { JSONSchema7, JSONSchema7TypeName } from '@/components/schema-editor/json-schema';
 import { useSchemaForm } from '@/components/schema-editor/use-schema-form';
 import { convertSchemaToPropertyList } from '@/components/schema-editor/utils';
-import type { JSONSchema7, JSONSchema7TypeName } from '@/components/schema-editor/json-schema';
-import type { SchemaEditorFormValues, PropertyListItem } from '@/components/schema-editor/utils/validation-schema';
-import { patchWorkflow } from '../../api/workflows';
-import type { WorkflowResponseDto, IEnvironment, PatchWorkflowDto } from '@novu/shared';
+import type { PropertyListItem, SchemaEditorFormValues } from '@/components/schema-editor/utils/validation-schema';
 import { QueryKeys } from '@/utils/query-keys';
+import { patchWorkflow } from '../../api/workflows';
 
 interface ExtendedPatchWorkflowDto extends PatchWorkflowDto {
   validatePayload?: boolean;
@@ -154,20 +154,20 @@ export function useWorkflowSchemaManager({
 
   const handleSaveChanges = useCallback(async () => {
     if (!workflow?.slug) {
-      console.error('Workflow slug is missing. Cannot save.');
       setSaveError(new Error('Workflow slug is missing.'));
+
       return;
     }
 
     if (!environment || !environment._id) {
-      console.error('Environment is missing or invalid. Cannot save.');
       setSaveError(new Error('Environment is missing or invalid.'));
+
       return;
     }
 
     if (!isSchemaValid) {
-      console.error('Schema is invalid. Cannot save.');
       setSaveError(new Error('Schema is invalid.'));
+
       return;
     }
 
@@ -192,9 +192,12 @@ export function useWorkflowSchemaManager({
         queryKey: [QueryKeys.fetchWorkflow],
       });
 
+      queryClient.invalidateQueries({
+        queryKey: [QueryKeys.diffEnvironments],
+      });
+
       onSaveSuccess?.(schemaToSave);
     } catch (error: any) {
-      console.error('Failed to save payload schema due to API error:', error);
       setSaveError(error);
     } finally {
       setIsSaving(false);

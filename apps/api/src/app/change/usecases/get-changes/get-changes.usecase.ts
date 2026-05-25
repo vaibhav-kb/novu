@@ -1,17 +1,17 @@
-/* eslint-disable global-require */
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
+import { PinoLogger } from '@novu/application-generic';
 import {
   ChangeEntity,
   ChangeRepository,
+  FeedRepository,
+  LayoutRepository,
   MessageTemplateRepository,
   NotificationGroupRepository,
   NotificationTemplateRepository,
-  FeedRepository,
-  LayoutRepository,
 } from '@novu/dal';
 import { ChangeEntityTypeEnum } from '@novu/shared';
-import { ModuleRef } from '@nestjs/core';
-import { PinoLogger } from '@novu/application-generic';
+import { TRANSLATIONS_SERVICE } from '../../../shared/constants';
 import { ChangesResponseDto } from '../../dtos/change-response.dto';
 import { GetChangesCommand } from './get-changes.command';
 
@@ -131,7 +131,6 @@ export class GetChanges {
         _id: entityId,
         _environmentId: environmentId,
       });
-      // eslint-disable-next-line prefer-destructuring
       item = items[0];
     }
 
@@ -153,10 +152,10 @@ export class GetChanges {
   ): Promise<IViewEntity | Record<string, unknown>> {
     try {
       if (process.env.NOVU_ENTERPRISE === 'true' || process.env.CI_EE_TEST === 'true') {
-        if (!require('@novu/ee-shared-services')?.TranslationsService) {
+        if (!this.moduleRef.get(TRANSLATIONS_SERVICE, { strict: false })) {
           throw new BadRequestException('Translation module is not loaded');
         }
-        const service = this.moduleRef.get(require('@novu/ee-shared-services')?.TranslationsService, { strict: false });
+        const service = this.moduleRef.get(TRANSLATIONS_SERVICE, { strict: false });
         const { name, identifier } = await service.getTranslationGroupData(environmentId, entityId);
 
         return {
@@ -177,10 +176,10 @@ export class GetChanges {
   ): Promise<IViewEntity | Record<string, unknown>> {
     try {
       if (process.env.NOVU_ENTERPRISE === 'true' || process.env.CI_EE_TEST === 'true') {
-        if (!require('@novu/ee-shared-services')?.TranslationsService) {
+        if (!this.moduleRef.get(TRANSLATIONS_SERVICE, { strict: false })) {
           throw new BadRequestException('Translation module is not loaded');
         }
-        const service = this.moduleRef.get(require('@novu/ee-shared-services')?.TranslationsService, { strict: false });
+        const service = this.moduleRef.get(TRANSLATIONS_SERVICE, { strict: false });
         const { name, group } = await service.getTranslationData(environmentId, entityId);
 
         return {
@@ -226,7 +225,6 @@ export class GetChanges {
 
     if (!item) {
       const items = await this.feedRepository.findDeleted({ _id: entityId, _environmentId: environmentId });
-      // eslint-disable-next-line prefer-destructuring
       item = items[0];
       if (!item) {
         this.logger.error(`Could not find feed for id ${entityId}`);

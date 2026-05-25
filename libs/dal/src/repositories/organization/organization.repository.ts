@@ -69,8 +69,7 @@ export class OrganizationRepository implements IOrganizationRepository {
     return this.organizationRepository.find(query, select, options);
   }
 
-  // eslint-disable-next-line require-yield
-  async *findBatch(
+  findBatch(
     query: any,
     select?: string | undefined,
     options?: any,

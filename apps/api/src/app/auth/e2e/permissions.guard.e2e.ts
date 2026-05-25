@@ -1,12 +1,11 @@
+import { HttpRequestHeaderKeysEnum } from '@novu/application-generic';
+import { ApiAuthSchemeEnum, ApiServiceLevelEnum, PermissionsEnum } from '@novu/shared';
 import { UserSession } from '@novu/testing';
 import { expect } from 'chai';
-import { ApiAuthSchemeEnum, PermissionsEnum, ApiServiceLevelEnum } from '@novu/shared';
-import { HttpRequestHeaderKeysEnum } from '@novu/application-generic';
 
 describe('PermissionsGuard #novu-v2', () => {
   before(() => {
-    // @ts-ignore - Setting environment variables
-    process.env.IS_RBAC_ENABLED = 'true';
+    (process.env as Record<string, string>).IS_RBAC_ENABLED = 'true';
   });
 
   let session: UserSession;

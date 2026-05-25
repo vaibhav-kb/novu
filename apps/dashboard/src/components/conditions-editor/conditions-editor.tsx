@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { type Field, QueryBuilder, RuleGroupType, Translations } from 'react-querybuilder';
 import 'react-querybuilder/dist/query-builder.css';
 
@@ -7,21 +7,21 @@ import { AddGroupAction } from '@/components/conditions-editor/add-group-action'
 import { CombinatorSelector } from '@/components/conditions-editor/combinator-selector';
 import { ConditionsEditorProvider } from '@/components/conditions-editor/conditions-editor-context';
 import { FieldSelector } from '@/components/conditions-editor/field-selector';
+import {
+  getHelpTextForField,
+  getPlaceholderForField,
+  getValueEditorTypeForField,
+} from '@/components/conditions-editor/field-type-editors';
+import { getOperatorsForFieldType } from '@/components/conditions-editor/field-type-operators';
 import { OperatorSelector } from '@/components/conditions-editor/operator-selector';
 import { RuleActions } from '@/components/conditions-editor/rule-actions';
 import { ValueEditor } from '@/components/conditions-editor/value-editor';
 import {
-  IsAllowedVariable,
-  LiquidVariable,
   EnhancedLiquidVariable,
   type FieldDataType,
+  IsAllowedVariable,
+  LiquidVariable,
 } from '@/utils/parseStepVariables';
-import { getOperatorsForFieldType } from '@/components/conditions-editor/field-type-operators';
-import {
-  getValueEditorTypeForField,
-  getPlaceholderForField,
-  getHelpTextForField,
-} from '@/components/conditions-editor/field-type-editors';
 
 export interface EnhancedField extends Field {
   dataType: FieldDataType;
@@ -29,17 +29,17 @@ export interface EnhancedField extends Field {
   format?: string;
 }
 
-const ruleActionsClassName = `[&>[data-actions="true"]]:opacity-0 [&:hover>[data-actions="true"]]:opacity-100 [&>[data-actions="true"]:has(~[data-radix-popper-content-wrapper])]:opacity-100`;
-const groupActionsClassName = `[&_.ruleGroup-header>[data-actions="true"]]:opacity-0 [&_.ruleGroup-header:hover>[data-actions="true"]]:opacity-100 [&_.ruleGroup-header>[data-actions="true"]:has(~[data-radix-popper-content-wrapper])]:opacity-100`;
-const nestedGroupClassName = `[&.ruleGroup_.ruleGroup]:p-3 [&.ruleGroup_.ruleGroup]:bg-neutral-50 [&.ruleGroup_.ruleGroup]:rounded-md [&.ruleGroup_.ruleGroup]:border [&.ruleGroup_.ruleGroup]:border-solid [&.ruleGroup_.ruleGroup]:border-neutral-100`;
-const ruleGroupClassName = `[&.ruleGroup]:[background:transparent] [&.ruleGroup]:[border:none] [&.ruleGroup]:p-0 ${nestedGroupClassName} [&_.ruleGroup-body_.rule]:items-start ${groupActionsClassName}`;
+const ruleActionsClassName = `*:data-[actions="true"]:opacity-0! [&:hover>[data-actions="true"]]:opacity-100! [&>[data-actions="true"]:has(~[data-radix-popper-content-wrapper])]:opacity-100!`;
+const groupActionsClassName = `[&_.ruleGroup-header>[data-actions="true"]]:opacity-0! [&_.ruleGroup-header:hover>[data-actions="true"]]:opacity-100! [&_.ruleGroup-header>[data-actions="true"]:has(~[data-radix-popper-content-wrapper])]:opacity-100!`;
+const nestedGroupClassName = `[&.ruleGroup_.ruleGroup]:p-3! [&.ruleGroup_.ruleGroup]:bg-neutral-50! [&.ruleGroup_.ruleGroup]:rounded-md! [&.ruleGroup_.ruleGroup]:border! [&.ruleGroup_.ruleGroup]:border-solid! [&.ruleGroup_.ruleGroup]:border-neutral-100!`;
+const ruleGroupClassName = `[&.ruleGroup]:bg-transparent! [&.ruleGroup]:border-none! [&.ruleGroup]:p-0! ${nestedGroupClassName} [&_.ruleGroup-body_.rule]:items-start! ${groupActionsClassName}`;
 const ruleClassName = `${ruleActionsClassName}`;
 
 const controlClassnames = {
   ruleGroup: ruleGroupClassName,
   rule: ruleClassName,
   queryBuilder:
-    'queryBuilder-branches [&_.rule]:before:border-stroke-soft [&_.rule]:after:border-stroke-soft [&_.ruleGroup_.ruleGroup]:before:border-stroke-soft [&_.ruleGroup_.ruleGroup]:after:border-stroke-soft',
+    'queryBuilder-branches [&_.rule]:before:border-stroke-soft! [&_.rule]:after:border-stroke-soft! [&_.ruleGroup_.ruleGroup]:before:border-stroke-soft! [&_.ruleGroup_.ruleGroup]:after:border-stroke-soft!',
 };
 
 const translations: Partial<Translations> = {
@@ -76,6 +76,7 @@ function InternalConditionsEditor({
   onQueryChange,
   saveForm,
   enhancedVariables,
+  disabled,
 }: {
   fields: EnhancedField[];
   variables: LiquidVariable[];
@@ -84,6 +85,7 @@ function InternalConditionsEditor({
   onQueryChange: (query: RuleGroupType) => void;
   saveForm: () => void;
   enhancedVariables?: EnhancedLiquidVariable[];
+  disabled?: boolean;
 }) {
   const fieldDataMap = useMemo(() => {
     if (!enhancedVariables) return new Map();
@@ -217,6 +219,7 @@ function InternalConditionsEditor({
       resetOnFieldChange={false}
       getOperators={getOperators}
       getValueEditorType={getValueEditorType}
+      disabled={disabled}
     />
   );
 }
@@ -240,6 +243,7 @@ export function ConditionsEditor({
   variables,
   isAllowedVariable,
   enhancedVariables,
+  disabled,
 }: {
   query: RuleGroupType;
   onQueryChange: (query: RuleGroupType) => void;
@@ -248,6 +252,7 @@ export function ConditionsEditor({
   variables: LiquidVariable[];
   isAllowedVariable: IsAllowedVariable;
   enhancedVariables?: EnhancedLiquidVariable[];
+  disabled?: boolean;
 }) {
   return (
     <ConditionsEditorProvider query={query} onQueryChange={onQueryChange}>
@@ -259,6 +264,7 @@ export function ConditionsEditor({
         onQueryChange={onQueryChange}
         saveForm={saveForm}
         enhancedVariables={enhancedVariables}
+        disabled={disabled}
       />
     </ConditionsEditorProvider>
   );

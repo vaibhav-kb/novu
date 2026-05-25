@@ -1,8 +1,7 @@
 import mongoose, { IndexOptions, Schema } from 'mongoose';
-
+import { IndexDefinition } from '../../shared/types';
 import { schemaOptions } from '../schema-default.options';
 import { SubscriberDBModel, SubscriberEntity } from './subscriber.entity';
-import { IndexDefinition } from '../../shared/types';
 
 const mongooseDelete = require('mongoose-delete');
 
@@ -27,6 +26,7 @@ const subscriberSchema = new Schema<SubscriberDBModel>(
     isOnline: {
       type: Schema.Types.Boolean,
       required: false,
+      default: false,
     },
     lastOnlineAt: Schema.Types.Date,
     data: Schema.Types.Mixed,
@@ -208,12 +208,13 @@ subscriberSchema.index(
   { name: 'unique_subscriber_per_environment', unique: true, partialFilterExpression: { deleted: false } }
 );
 
-subscriberSchema.plugin(mongooseDelete, { deletedAt: true, deletedBy: true, overrideMethods: 'all' });
+subscriberSchema.plugin(mongooseDelete, {
+  deletedAt: true,
+  deletedBy: true,
+  overrideMethods: 'all',
+  use$neOperator: false,
+});
 
 export const Subscriber =
   (mongoose.models.Subscriber as mongoose.Model<SubscriberDBModel>) ||
   mongoose.model<SubscriberDBModel>('Subscriber', subscriberSchema);
-
-function index(fields: IndexDefinition<SubscriberEntity>, options?: IndexOptions) {
-  subscriberSchema.index(fields, options);
-}

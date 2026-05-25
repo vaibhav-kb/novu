@@ -1,6 +1,5 @@
+import { ResourceOriginEnum, RuntimeIssue, Slug, StepTypeEnum } from '@novu/shared';
 import type { JSONSchemaDto } from './json-schema-dto';
-import { Slug, StepTypeEnum, WorkflowOriginEnum } from '../../types';
-import { StepContentIssueEnum, StepIntegrationIssueEnum, StepIssueEnum } from './step-content-issue.enum';
 
 export type StepResponseDto = {
   controls: Controls;
@@ -11,10 +10,11 @@ export type StepResponseDto = {
   name: string;
   slug: Slug;
   type: StepTypeEnum;
-  origin: WorkflowOriginEnum;
+  origin: ResourceOriginEnum;
   workflowId: string;
   workflowDatabaseId: string;
   issues?: StepIssuesDto;
+  stepResolverHash?: string;
 };
 
 export type StepUpdateDto = StepCreateDto & {
@@ -32,42 +32,36 @@ export type StepDto = {
   type: StepTypeEnum;
 };
 
-// eslint-disable-next-line @typescript-eslint/naming-convention
-interface Issue<T> {
-  issueType: T;
-  variableName?: string;
-  message: string;
+export class StepIssuesDto {
+  controls?: Record<string, RuntimeIssue[]>;
+  integration?: Record<string, RuntimeIssue[]>;
 }
 
-export class StepIssuesDto {
-  controls?: Record<string, StepContentIssue[]>;
-  integration?: Record<string, StepIntegrationIssue[]>;
-}
+export type StepListResponseDto = {
+  slug: Slug;
+  type: StepTypeEnum;
+  issues?: StepIssuesDto;
+};
 
 export type StepCreateAndUpdateKeys = keyof StepCreateDto | keyof StepUpdateDto;
-
-// eslint-disable-next-line @typescript-eslint/naming-convention
-export interface StepContentIssue extends Issue<StepContentIssueEnum> {}
-
-// eslint-disable-next-line @typescript-eslint/naming-convention
-export interface StepIntegrationIssue extends Issue<StepIntegrationIssueEnum> {}
-
-// eslint-disable-next-line @typescript-eslint/naming-convention
-export interface StepIssue extends Issue<StepIssueEnum> {}
 
 export enum UiSchemaGroupEnum {
   IN_APP = 'IN_APP',
   EMAIL = 'EMAIL',
   DIGEST = 'DIGEST',
   DELAY = 'DELAY',
+  THROTTLE = 'THROTTLE',
   SMS = 'SMS',
   CHAT = 'CHAT',
   PUSH = 'PUSH',
   SKIP = 'SKIP',
+  LAYOUT = 'LAYOUT',
+  HTTP_REQUEST = 'HTTP_REQUEST',
 }
 
 export enum UiComponentEnum {
   EMAIL_EDITOR_SELECT = 'EMAIL_EDITOR_SELECT',
+  LAYOUT_SELECT = 'LAYOUT_SELECT',
   /** @deprecated use EMAIL_BODY instead  */
   BLOCK_EDITOR = 'BLOCK_EDITOR',
   EMAIL_BODY = 'EMAIL_BODY',
@@ -82,22 +76,42 @@ export enum UiComponentEnum {
   URL_TEXT_BOX = 'URL_TEXT_BOX',
   DIGEST_AMOUNT = 'DIGEST_AMOUNT',
   DIGEST_UNIT = 'DIGEST_UNIT',
+  DIGEST_TYPE = 'DIGEST_TYPE',
   DIGEST_KEY = 'DIGEST_KEY',
   DIGEST_CRON = 'DIGEST_CRON',
-  DELAY_TYPE = 'DELAY_TYPE',
   DELAY_AMOUNT = 'DELAY_AMOUNT',
   DELAY_UNIT = 'DELAY_UNIT',
+  DELAY_TYPE = 'DELAY_TYPE',
+  DELAY_CRON = 'DELAY_CRON',
+  DELAY_DYNAMIC_KEY = 'DELAY_DYNAMIC_KEY',
+  THROTTLE_TYPE = 'THROTTLE_TYPE',
+  THROTTLE_WINDOW = 'THROTTLE_WINDOW',
+  THROTTLE_UNIT = 'THROTTLE_UNIT',
+  THROTTLE_DYNAMIC_KEY = 'THROTTLE_DYNAMIC_KEY',
+  THROTTLE_THRESHOLD = 'THROTTLE_THRESHOLD',
+  THROTTLE_KEY = 'THROTTLE_KEY',
+  EXTEND_TO_SCHEDULE = 'EXTEND_TO_SCHEDULE',
   SMS_BODY = 'SMS_BODY',
   CHAT_BODY = 'CHAT_BODY',
   PUSH_BODY = 'PUSH_BODY',
   PUSH_SUBJECT = 'PUSH_SUBJECT',
   QUERY_EDITOR = 'QUERY_EDITOR',
   DATA = 'DATA',
+  LAYOUT_EMAIL = 'LAYOUT_EMAIL',
+  DESTINATION_METHOD = 'DESTINATION_METHOD',
+  DESTINATION_URL = 'DESTINATION_URL',
+  DESTINATION_HEADERS = 'DESTINATION_HEADERS',
+  DESTINATION_BODY = 'DESTINATION_BODY',
+  DESTINATION_RESPONSE_BODY_SCHEMA = 'DESTINATION_RESPONSE_BODY_SCHEMA',
+  DESTINATION_ENFORCE_SCHEMA_VALIDATION = 'DESTINATION_ENFORCE_SCHEMA_VALIDATION',
+  DESTINATION_CONTINUE_ON_FAILURE = 'DESTINATION_CONTINUE_ON_FAILURE',
+  DESTINATION_TIMEOUT = 'DESTINATION_TIMEOUT',
 }
 
 export class UiSchemaProperty {
   placeholder?: unknown;
   component: UiComponentEnum;
+  properties?: Record<string, UiSchemaProperty>;
 }
 
 export class UiSchema {

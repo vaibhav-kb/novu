@@ -1,5 +1,5 @@
-/* eslint-disable global-require */
 import { DynamicModule, Logger, Module, OnApplicationShutdown, Provider, Type } from '@nestjs/common';
+import { ForwardReference } from '@nestjs/common/interfaces/modules/forward-reference.interface';
 import {
   BulkCreateExecutionDetails,
   CalculateLimitNovuIntegration,
@@ -8,35 +8,45 @@ import {
   CompileTemplate,
   ConditionsFilter,
   CreateExecutionDetails,
+  ExecuteStepResolverRequest,
   GetDecryptedIntegrations,
-  GetLayoutUseCase,
+  GetLayoutUseCaseV0,
   GetNovuLayout,
   GetNovuProviderCredentials,
   GetPreferences,
+  GetSubscriberSchedule,
   GetSubscriberTemplatePreference,
   GetTopicSubscribersUseCase,
+  InboundDomainRouteDelivery,
+  InMemoryProviderService,
+  MsTeamsTokenService,
   NormalizeVariables,
   ProcessTenant,
+  RedisThrottleService,
   SelectIntegration,
   SelectVariant,
+  SendWebhookMessage,
   TierRestrictionsValidateUsecase,
   TriggerBroadcast,
   TriggerEvent,
   TriggerMulticast,
+  VerifyPayload,
   WorkflowInMemoryProviderService,
 } from '@novu/application-generic';
 import {
-  CommunityMemberRepository,
+  ChannelConnectionRepository,
+  ChannelEndpointRepository,
   CommunityOrganizationRepository,
   CommunityUserRepository,
+  ContextRepository,
+  DomainRepository,
+  DomainRouteRepository,
   JobRepository,
-  MemberRepository,
   PreferencesRepository,
-  UserRepository,
 } from '@novu/dal';
-
-import { ForwardReference } from '@nestjs/common/interfaces/modules/forward-reference.interface';
 import { JobTopicNameEnum } from '@novu/shared';
+import { ACTIVE_WORKERS, workersToProcess } from '../../config/worker-init.config';
+import { SharedModule } from '../shared/shared.module';
 import {
   Digest,
   ExecuteBridgeJob,
@@ -55,15 +65,18 @@ import {
   SendMessageSms,
   SetJobAsCompleted,
   SetJobAsFailed,
+  Throttle,
   UpdateJobStatus,
   WebhookFilterBackoffStrategy,
 } from './usecases';
-
-import { ACTIVE_WORKERS, workersToProcess } from '../../config/worker-init.config';
-import { SharedModule } from '../shared/shared.module';
-import { AddDelayJob, AddJob, MergeOrCreateDigest } from './usecases/add-job';
+import { AddJob, MergeOrCreateDigest } from './usecases/add-job';
 import { InboundEmailParse } from './usecases/inbound-email-parse/inbound-email-parse.usecase';
-import { ExecuteStepCustom } from './usecases/send-message/execute-step-custom.usecase';
+import { DomainRouteStrategy } from './usecases/inbound-email-parse/strategies/domain-route.strategy';
+import { ReplyToStrategy } from './usecases/inbound-email-parse/strategies/reply-to.strategy';
+import { NoopSendWebhookMessage } from './usecases/noop-send-webhook-message.usecase';
+import { ResolveChannelEndpoints } from './usecases/send-message/channel-endpoint-resolution/resolve-channel-endpoints.usecase';
+import { ExecuteCodeFirstCustomStep } from './usecases/send-message/execute-code-first-custom-step.usecase';
+import { ExecuteHttpRequestStep } from './usecases/send-message/execute-http-request-step.usecase';
 import { StoreSubscriberJobs } from './usecases/store-subscriber-jobs';
 import { SubscriberJobBound } from './usecases/subscriber-job-bound/subscriber-job-bound.usecase';
 
@@ -90,10 +103,55 @@ const enterpriseImports = (): Array<Type | DynamicModule | Promise<DynamicModule
   return modules;
 };
 
-const REPOSITORIES = [JobRepository, CommunityOrganizationRepository, PreferencesRepository, CommunityUserRepository];
+const REPOSITORIES = [
+  DomainRepository,
+  DomainRouteRepository,
+  JobRepository,
+  CommunityOrganizationRepository,
+  PreferencesRepository,
+  CommunityUserRepository,
+  ChannelEndpointRepository,
+  ChannelConnectionRepository,
+  ContextRepository,
+];
+
+const webhookProvider: Provider = {
+  provide: SendWebhookMessage,
+  useClass: (() => {
+    const isEnterprise = process.env.NOVU_ENTERPRISE === 'true' || process.env.CI_EE_TEST === 'true';
+
+    if (isEnterprise) {
+      Logger.log('Using enterprise SendWebhookMessage provider', 'EnterpriseProvider');
+      return SendWebhookMessage;
+    } else {
+      Logger.log('Using noop SendWebhookMessage provider', 'EnterpriseProvider');
+      return NoopSendWebhookMessage;
+    }
+  })(),
+};
+
+const svixProvider: Provider = {
+  provide: 'SVIX_CLIENT',
+  useFactory: () => {
+    const isEnterprise = process.env.NOVU_ENTERPRISE === 'true' || process.env.CI_EE_TEST === 'true';
+
+    if (isEnterprise) {
+      Logger.log('Using enterprise SvixProviderService provider', 'EnterpriseProvider');
+      const apiKey = process.env.SVIX_API_KEY;
+      if (!apiKey) {
+        return null;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { Svix } = require('svix');
+      return new Svix(apiKey);
+    } else {
+      Logger.log('Using noop SvixProviderService provider', 'EnterpriseProvider');
+      return null;
+    }
+  },
+};
 
 const USE_CASES = [
-  AddDelayJob,
   TierRestrictionsValidateUsecase,
   MergeOrCreateDigest,
   AddJob,
@@ -108,7 +166,7 @@ const USE_CASES = [
   GetDecryptedIntegrations,
   GetDigestEventsBackoff,
   GetDigestEventsRegular,
-  GetLayoutUseCase,
+  GetLayoutUseCaseV0,
   GetNovuLayout,
   GetNovuProviderCredentials,
   SelectIntegration,
@@ -125,11 +183,14 @@ const USE_CASES = [
   SendMessageInApp,
   SendMessagePush,
   SendMessageSms,
-  ExecuteStepCustom,
+  Throttle,
+  ExecuteCodeFirstCustomStep,
+  ExecuteHttpRequestStep,
   StoreSubscriberJobs,
   SetJobAsCompleted,
   SetJobAsFailed,
   TriggerEvent,
+  VerifyPayload,
   UpdateJobStatus,
   ProcessUnsnoozeJob,
   WebhookFilterBackoffStrategy,
@@ -139,11 +200,17 @@ const USE_CASES = [
   TriggerMulticast,
   CompileInAppTemplate,
   InboundEmailParse,
+  InboundDomainRouteDelivery,
+  ReplyToStrategy,
+  DomainRouteStrategy,
   ExecuteBridgeJob,
+  ExecuteStepResolverRequest,
   GetPreferences,
+  GetSubscriberSchedule,
+  ResolveChannelEndpoints,
 ];
 
-const PROVIDERS: Provider[] = [];
+const PROVIDERS: Provider[] = [RedisThrottleService, MsTeamsTokenService];
 const activeWorkersToken: any = {
   provide: 'ACTIVE_WORKERS',
   useFactory: (...args: any[]) => {
@@ -163,10 +230,28 @@ const memoryQueueService = {
   },
 };
 
+const inMemoryProviderService = {
+  provide: InMemoryProviderService,
+  useFactory: (workflowInMemoryProviderService: WorkflowInMemoryProviderService) => {
+    return workflowInMemoryProviderService.inMemoryProviderService;
+  },
+  inject: [WorkflowInMemoryProviderService],
+};
+
 @Module({
   imports: [SharedModule, ...enterpriseImports()],
   controllers: [],
-  providers: [memoryQueueService, ...ACTIVE_WORKERS, ...PROVIDERS, ...USE_CASES, ...REPOSITORIES, activeWorkersToken],
+  providers: [
+    memoryQueueService,
+    inMemoryProviderService,
+    ...ACTIVE_WORKERS,
+    ...PROVIDERS,
+    ...USE_CASES,
+    ...REPOSITORIES,
+    activeWorkersToken,
+    webhookProvider,
+    svixProvider,
+  ],
   exports: [...PROVIDERS, ...USE_CASES, ...REPOSITORIES, activeWorkersToken],
 })
 export class WorkflowModule implements OnApplicationShutdown {

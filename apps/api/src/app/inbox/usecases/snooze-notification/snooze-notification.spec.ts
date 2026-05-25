@@ -1,28 +1,27 @@
-import sinon from 'sinon';
-import { expect } from 'chai';
-import { NotFoundException, HttpException, HttpStatus } from '@nestjs/common';
+import { HttpException, HttpStatus, NotFoundException } from '@nestjs/common';
 import {
+  AnalyticsService,
   CreateExecutionDetails,
   CreateExecutionDetailsCommand,
-  StandardQueueService,
   PinoLogger,
-  AnalyticsService,
+  StandardQueueService,
 } from '@novu/application-generic';
 import {
+  CommunityOrganizationRepository,
   JobEntity,
   JobRepository,
-  MessageRepository,
   MessageEntity,
-  CommunityOrganizationRepository,
+  MessageRepository,
   OrganizationEntity,
 } from '@novu/dal';
-import { ApiServiceLevelEnum, ChannelTypeEnum, JobStatusEnum } from '@novu/shared';
-
-import { SnoozeNotification } from './snooze-notification.usecase';
-import { SnoozeNotificationCommand } from './snooze-notification.command';
-import { MarkNotificationAs } from '../mark-notification-as/mark-notification-as.usecase';
+import { ApiServiceLevelEnum, ChannelTypeEnum, JobStatusEnum, SeverityLevelEnum } from '@novu/shared';
+import { expect } from 'chai';
+import sinon from 'sinon';
+import { InboxNotificationDto } from '../../dtos/inbox-notification.dto';
 import { MarkNotificationAsCommand } from '../mark-notification-as/mark-notification-as.command';
-import { InboxNotification } from '../../utils/types';
+import { MarkNotificationAs } from '../mark-notification-as/mark-notification-as.usecase';
+import { SnoozeNotificationCommand } from './snooze-notification.command';
+import { SnoozeNotification } from './snooze-notification.usecase';
 
 describe('SnoozeNotification', () => {
   const validNotificationId = '507f1f77bcf86cd799439011';
@@ -70,19 +69,22 @@ describe('SnoozeNotification', () => {
     status: JobStatusEnum.PENDING,
   } as JobEntity;
 
-  const mockNotification: InboxNotification = {
+  const mockNotification: InboxNotificationDto = {
     id: validNotificationId,
+    transactionId: 'transaction-id',
     body: 'Test notification',
     to: {
       subscriberId: validSubscriberId,
       id: validSubscriberId,
     },
+    isSeen: false,
     isRead: false,
     isArchived: false,
     isSnoozed: true,
     snoozedUntil: new Date().toISOString(),
     createdAt: new Date().toISOString(),
     channelType: ChannelTypeEnum.IN_APP,
+    severity: SeverityLevelEnum.NONE,
   };
 
   beforeEach(() => {

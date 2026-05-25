@@ -1,18 +1,5 @@
 import 'cross-fetch/polyfill';
 import { faker } from '@faker-js/faker';
-import request, { SuperTest, Test } from 'supertest';
-import jwt from 'jsonwebtoken';
-import superAgentDefaults from 'superagent-defaults';
-import {
-  ApiServiceLevelEnum,
-  EmailBlockTypeEnum,
-  IApiRateLimitMaximum,
-  IEmailBlock,
-  isClerkEnabled,
-  MemberRoleEnum,
-  ALL_PERMISSIONS,
-  StepTypeEnum,
-} from '@novu/shared';
 import {
   ChangeEntity,
   ChangeRepository,
@@ -26,20 +13,32 @@ import {
   SubscriberRepository,
   UserEntity,
 } from '@novu/dal';
-
-import { NotificationTemplateService } from './notification-template.service';
-import { TestServer, testServer } from './test-server.service';
-import { OrganizationService } from './organization.service';
-import { EnvironmentService } from './environment.service';
-import { CreateTemplatePayload } from './create-notification-template.interface';
-import { IntegrationService } from './integration.service';
-import { UserService } from './user.service';
-import { JobsService } from './jobs.service';
-import { EEUserService } from './ee/ee.user.service';
-import { EEOrganizationService } from './ee/ee.organization.service';
+import {
+  ALL_PERMISSIONS,
+  ApiServiceLevelEnum,
+  EmailBlockTypeEnum,
+  IApiRateLimitMaximum,
+  IEmailBlock,
+  isClerkEnabled,
+  MemberRoleEnum,
+  StepTypeEnum,
+} from '@novu/shared';
+import jwt from 'jsonwebtoken';
+import superAgentDefaults from 'superagent-defaults';
+import request, { SuperTest, Test } from 'supertest';
 import { TEST_USER_PASSWORD } from './constants';
-import { ClerkJwtPayload } from './ee/types';
+import { CreateTemplatePayload } from './create-notification-template.interface';
 import { CLERK_ORGANIZATION_1, CLERK_USER_1 } from './ee/clerk-mock-data';
+import { EEOrganizationService } from './ee/ee.organization.service';
+import { EEUserService } from './ee/ee.user.service';
+import { ClerkJwtPayload } from './ee/types';
+import { EnvironmentService } from './environment.service';
+import { IntegrationService } from './integration.service';
+import { JobsService } from './jobs.service';
+import { NotificationTemplateService } from './notification-template.service';
+import { OrganizationService } from './organization.service';
+import { TestServer, testServer } from './test-server.service';
+import { UserService } from './user.service';
 
 type UserSessionOptions = {
   noOrganization?: boolean;
@@ -97,6 +96,9 @@ export class UserSession {
   }
 
   async initialize(options: UserSessionOptions = {}) {
+    // Clear Redis queues from any previous test jobs to ensure test isolation
+    await this.jobsService.clearAllQueues();
+
     if (isClerkEnabled()) {
       await this.initializeEE(options);
     } else {
@@ -257,13 +259,19 @@ export class UserSession {
       const currentPayload = this.token ? jwt.decode(this.token.replace('Bearer ', '')) : null;
 
       const baseToken = process.env.CLERK_LONG_LIVED_TOKEN as string;
+      const decodedBaseToken = jwt.decode(baseToken);
       const payload = {
-        ...jwt.decode(baseToken),
-        ...(currentPayload || {}),
+        ...(typeof decodedBaseToken === 'object' && decodedBaseToken !== null ? decodedBaseToken : {}),
+        ...(typeof currentPayload === 'object' && currentPayload !== null ? currentPayload : {}),
         ...claims,
       };
 
-      const encodedToken = jwt.sign(payload, process.env.CLERK_MOCK_JWT_PRIVATE_KEY, {
+      const privateKey = process.env.CLERK_MOCK_JWT_PRIVATE_KEY;
+      if (!privateKey) {
+        throw new Error('CLERK_MOCK_JWT_PRIVATE_KEY environment variable is not set');
+      }
+
+      const encodedToken = jwt.sign(payload, privateKey, {
         algorithm: 'RS256',
       });
 
@@ -422,7 +430,6 @@ export class UserSession {
   }
 
   async createFeed(name?: string) {
-    // eslint-disable-next-line no-param-reassign
     name = name || 'Activities';
     const feed = await this.feedRepository.create({
       name,
@@ -434,37 +441,52 @@ export class UserSession {
     return feed;
   }
 
-  public async waitForJobCompletion(templateId?: string | string[], organizationId = this.organization._id) {
+  public async waitForJobCompletion(
+    templateId?: string | string[],
+    organizationId = this.organization._id,
+    maxWaitTime?: number
+  ) {
     return this.jobsService.waitForJobCompletion({
       templateId,
       organizationId,
+      maxWaitTime,
     });
   }
 
   public async waitForDbJobCompletion({
     templateId,
     organizationId,
+    maxWaitTime,
   }: {
     templateId?: string | string[];
     organizationId?: string | string[];
+    maxWaitTime?: number;
   }) {
-    return this.jobsService.waitForDbJobCompletion({ templateId, organizationId });
+    return this.jobsService.waitForDbJobCompletion({ templateId, organizationId, maxWaitTime });
   }
 
-  public async waitForWorkflowQueueCompletion() {
-    return this.jobsService.waitForWorkflowQueueCompletion();
+  public async waitForWorkflowQueueCompletion(maxWaitTime?: number) {
+    return this.jobsService.waitForWorkflowQueueCompletion(maxWaitTime);
   }
 
-  public async waitForSubscriberQueueCompletion() {
-    return this.jobsService.waitForSubscriberQueueCompletion();
+  public async waitForSubscriberQueueCompletion(maxWaitTime?: number) {
+    return this.jobsService.waitForSubscriberQueueCompletion(maxWaitTime);
   }
 
-  public async waitForStandardQueueCompletion() {
-    return this.jobsService.waitForStandardQueueCompletion();
+  public async waitForStandardQueueCompletion(maxWaitTime?: number) {
+    return this.jobsService.waitForStandardQueueCompletion(maxWaitTime);
   }
 
   public async runStandardQueueDelayedJobsImmediately() {
     return this.jobsService.runStandardQueueDelayedJobsImmediately();
+  }
+
+  public async clearAllQueues() {
+    return this.jobsService.clearAllQueues();
+  }
+
+  public async obliterateAllQueues() {
+    return this.jobsService.obliterateAllQueues();
   }
 
   public async applyChanges(where: Partial<ChangeEntity> = {}) {

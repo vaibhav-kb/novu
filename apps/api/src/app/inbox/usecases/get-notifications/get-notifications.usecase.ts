@@ -1,14 +1,15 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { AnalyticsService, buildFeedKey, CachedQuery } from '@novu/application-generic';
 import { ChannelTypeEnum, MessageRepository } from '@novu/dal';
+import { normalizeTagGroups } from '@novu/shared';
 
 import { GetSubscriber } from '../../../subscribers/usecases/get-subscriber';
 import type { GetNotificationsResponseDto } from '../../dtos/get-notifications-response.dto';
 import { AnalyticsEventsEnum } from '../../utils';
 import { mapToDto } from '../../utils/notification-mapper';
+import { NotificationFilter } from '../../utils/types';
 import { validateDataStructure } from '../../utils/validate-data';
 import type { GetNotificationsCommand } from './get-notifications.command';
-import { NotificationFilter } from '../../utils/types';
 
 @Injectable()
 export class GetNotifications {
@@ -18,14 +19,6 @@ export class GetNotifications {
     private messageRepository: MessageRepository
   ) {}
 
-  @CachedQuery({
-    builder: ({ environmentId, subscriberId, ...command }: GetNotificationsCommand) =>
-      buildFeedKey().cache({
-        environmentId,
-        subscriberId,
-        ...command,
-      }),
-  })
   async execute(command: GetNotificationsCommand): Promise<GetNotificationsResponseDto> {
     const subscriber = await this.getSubscriber.execute({
       environmentId: command.environmentId,
@@ -54,16 +47,28 @@ export class GetNotifications {
       }
     }
 
+    const severity = command.severity
+      ? Array.isArray(command.severity)
+        ? command.severity
+        : [command.severity]
+      : undefined;
+    const tagGroups = command.tags !== undefined ? normalizeTagGroups(command.tags) : undefined;
+
     const { data: feed, hasMore } = await this.messageRepository.paginate(
       {
         environmentId: command.environmentId,
         subscriberId: subscriber._id,
         channel: ChannelTypeEnum.IN_APP,
-        tags: command.tags,
+        contextKeys: command.contextKeys,
+        tagGroups,
         read: command.read,
         archived: command.archived,
         snoozed: command.snoozed,
+        seen: command.seen,
         data: parsedData,
+        severity,
+        createdGte: command.createdGte ? new Date(command.createdGte) : undefined,
+        createdLte: command.createdLte ? new Date(command.createdLte) : undefined,
       },
       {
         limit: command.limit,
@@ -85,7 +90,11 @@ export class GetNotifications {
       read: command.read,
       archived: command.archived,
       snoozed: command.snoozed,
+      seen: command.seen,
       data: parsedData,
+      severity: command.severity,
+      createdGte: command.createdGte,
+      createdLte: command.createdLte,
     };
 
     return {

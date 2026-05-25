@@ -1,5 +1,4 @@
 import { Injectable, InternalServerErrorException, OnModuleInit } from '@nestjs/common';
-import { CommunityOrganizationRepository, EnvironmentRepository } from '@novu/dal';
 import {
   buildMaximumApiRateLimitKey,
   CachedResponse,
@@ -7,6 +6,7 @@ import {
   InstrumentUsecase,
   PinoLogger,
 } from '@novu/application-generic';
+import { CommunityOrganizationRepository, EnvironmentRepository } from '@novu/dal';
 import {
   ApiRateLimitCategoryEnum,
   ApiRateLimitCategoryToFeatureName,
@@ -70,7 +70,7 @@ export class GetApiRateLimitMaximum implements OnModuleInit {
   }
 
   private async getOrganizationApiServiceLevel(_organizationId: string): Promise<ApiServiceLevelEnum> {
-    const organization = await this.organizationRepository.findById(_organizationId);
+    const organization = await this.organizationRepository.findById(_organizationId, '_id apiServiceLevel');
 
     if (!organization) {
       const message = `Organization id: ${_organizationId} not found`;
@@ -86,7 +86,9 @@ export class GetApiRateLimitMaximum implements OnModuleInit {
   }
 
   private async getEnvironment(_environmentId: string) {
-    const environment = await this.environmentRepository.findOne({ _id: _environmentId });
+    const environment = await this.environmentRepository.findOne({ _id: _environmentId }, '_id apiRateLimits', {
+      readPreference: 'secondaryPreferred',
+    });
 
     if (!environment) {
       const message = `Environment id: ${_environmentId} not found`;
@@ -109,7 +111,6 @@ export class GetApiRateLimitMaximum implements OnModuleInit {
           const envVarName = this.getEnvVarName(apiServiceLevel, apiRateLimitCategory);
           const envVarValue = processEnv[envVarName];
 
-          // eslint-disable-next-line no-param-reassign
           categoryAcc[apiRateLimitCategory] = envVarValue ? Number(envVarValue) : featureForTierAsNumber;
 
           return categoryAcc;

@@ -1,7 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsArray, IsNumber, ValidateNested } from 'class-validator';
+import { WorkflowListResponseDto } from '@novu/application-generic';
 import { Type } from 'class-transformer';
-import { WorkflowListResponseDto } from './workflow-list-response.dto';
+import { IsArray, IsNumber, ValidateNested } from 'class-validator';
 
 export class ListWorkflowResponse {
   @ApiProperty({

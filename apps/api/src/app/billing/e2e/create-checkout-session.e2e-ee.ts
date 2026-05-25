@@ -1,10 +1,8 @@
-/* eslint-disable global-require */
-import sinon from 'sinon';
-import { expect } from 'chai';
-
 import { ApiServiceLevelEnum, StripeBillingIntervalEnum } from '@novu/shared';
+import { expect } from 'chai';
+import sinon from 'sinon';
 
-const dashboardOrigin = process.env.FRONT_BASE_URL;
+const dashboardOrigin = process.env.DASHBOARD_URL;
 const checkoutSessionCreateParamsMock = {
   mode: 'subscription',
   customer: 'customer_id',
@@ -15,7 +13,7 @@ const checkoutSessionCreateParamsMock = {
   automatic_tax: {
     enabled: true,
   },
-  billing_address_collection: 'auto',
+  billing_address_collection: 'required',
   customer_update: {
     name: 'auto',
     address: 'auto',

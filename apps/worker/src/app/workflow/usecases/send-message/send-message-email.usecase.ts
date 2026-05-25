@@ -1,8 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
-import { addBreadcrumb } from '@sentry/node';
-import inlineCss from 'inline-css';
-
 import {
   CompileEmailTemplate,
   CompileEmailTemplateCommand,
@@ -10,11 +7,16 @@ import {
   CreateExecutionDetailsCommand,
   DetailEnum,
   FeatureFlagsService,
+  GetLayoutCommandV0,
+  GetLayoutUseCaseV0,
   GetNovuProviderCredentials,
+  Instrument,
   InstrumentUsecase,
   MailFactory,
+  messageWebhookMapper,
   SelectIntegration,
   SelectVariant,
+  SendWebhookMessage,
 } from '@novu/application-generic';
 import {
   EnvironmentEntity,
@@ -30,18 +32,24 @@ import {
 import { EmailOutput } from '@novu/framework/internal';
 import {
   ChannelTypeEnum,
+  DeliveryLifecycleDetail,
+  DeliveryLifecycleStatusEnum,
   EmailProviderIdEnum,
   ExecutionDetailsSourceEnum,
   ExecutionDetailsStatusEnum,
   FeatureFlagsKeysEnum,
   IAttachmentOptions,
   IEmailOptions,
+  safeJsonStringify,
+  WebhookEventEnum,
+  WebhookObjectTypeEnum,
 } from '@novu/shared';
+import inlineCss from 'inline-css';
 
 import { PlatformException } from '../../../shared/utils';
-import { SendMessageResult } from './send-message-type.usecase';
 import { SendMessageBase } from './send-message.base';
-import { SendMessageCommand } from './send-message.command';
+import { SendMessageChannelCommand } from './send-message-channel.command';
+import { SendMessageResult, SendMessageStatus } from './send-message-type.usecase';
 
 const LOG_CONTEXT = 'SendMessageEmail';
 
@@ -60,7 +68,9 @@ export class SendMessageEmail extends SendMessageBase {
     protected getNovuProviderCredentials: GetNovuProviderCredentials,
     protected selectVariant: SelectVariant,
     protected moduleRef: ModuleRef,
-    private featureFlagService: FeatureFlagsService
+    private featureFlagService: FeatureFlagsService,
+    private getLayoutUseCaseV0: GetLayoutUseCaseV0,
+    private sendWebhookMessage: SendWebhookMessage
   ) {
     super(
       messageRepository,
@@ -74,10 +84,10 @@ export class SendMessageEmail extends SendMessageBase {
   }
 
   @InstrumentUsecase()
-  public async execute(command: SendMessageCommand): Promise<SendMessageResult> {
+  public async execute(command: SendMessageChannelCommand): Promise<SendMessageResult> {
     let integration: IntegrationEntity | undefined;
     const { subscriber } = command.compileContext;
-    const email = command.overrides?.email?.toRecipient || subscriber.email;
+    const email: string | undefined = command.overrides?.email?.toRecipient || subscriber?.email;
 
     const overrideSelectedIntegration = command.overrides?.email?.integrationIdentifier;
     try {
@@ -112,8 +122,8 @@ export class SendMessageEmail extends SendMessageBase {
       );
 
       return {
-        status: 'failed',
-        reason: DetailEnum.LIMIT_PASSED_NOVU_INTEGRATION,
+        status: SendMessageStatus.FAILED,
+        errorMessage: DetailEnum.LIMIT_PASSED_NOVU_INTEGRATION,
       };
     }
 
@@ -121,10 +131,6 @@ export class SendMessageEmail extends SendMessageBase {
 
     if (!step) throw new PlatformException('Email channel step not found');
     if (!step.template) throw new PlatformException('Email channel template not found');
-
-    addBreadcrumb({
-      message: 'Sending Email',
-    });
 
     if (!integration) {
       await this.createExecutionDetails.execute(
@@ -146,14 +152,16 @@ export class SendMessageEmail extends SendMessageBase {
       );
 
       return {
-        status: 'failed',
-        reason: DetailEnum.SUBSCRIBER_NO_ACTIVE_INTEGRATION,
+        status: SendMessageStatus.FAILED,
+        errorMessage: DetailEnum.SUBSCRIBER_NO_ACTIVE_INTEGRATION,
       };
     }
 
+    const bridgeOutputs = command.bridgeData?.outputs;
+
     const [template, overrideLayoutId] = await Promise.all([
       this.processVariants(command),
-      this.getOverrideLayoutId(command),
+      this.getOverrideLayoutId(command, !!bridgeOutputs),
       this.sendSelectedIntegrationExecution(command.job, integration),
     ]);
 
@@ -161,23 +169,20 @@ export class SendMessageEmail extends SendMessageBase {
       step.template = template;
     }
 
-    const overrides: Record<string, any> = {
-      ...(command.overrides?.email || {}),
-      ...(command.overrides?.[integration?.providerId] || {}),
-    };
-    const bridgeOutputs = command.bridgeData?.outputs;
+    const overrides = this.buildEmailProviderOverrides(command, integration?.providerId, command.step?.stepId);
 
     let html;
     let subject = (bridgeOutputs as EmailOutput)?.subject || step?.template?.subject || '';
     let content;
     let senderName;
+    const bridgeFrom = (bridgeOutputs as EmailOutput)?.from;
 
     const payload = {
       senderName: step.template.senderName,
       subject,
       preheader: step.template.preheader,
       content: step.template.content,
-      layoutId: overrideLayoutId ?? step.template._layoutId,
+      layoutId: overrideLayoutId || (overrideLayoutId === null ? null : step.template._layoutId),
       contentType: step.template.contentType ? step.template.contentType : 'editor',
       payload: this.getCompilePayload(command.compileContext),
     };
@@ -200,8 +205,11 @@ export class SendMessageEmail extends SendMessageBase {
       payload: messagePayload,
       overrides,
       templateIdentifier: command.identifier,
+      stepId: command.step.stepId,
       _jobId: command.jobId,
       tags: command.tags,
+      severity: command.severity,
+      contextKeys: command.contextKeys,
     });
 
     let replyToAddress: string | undefined;
@@ -221,7 +229,7 @@ export class SendMessageEmail extends SendMessageBase {
       const i18nInstance = await this.initiateTranslations(
         command.environmentId,
         command.organizationId,
-        subscriber.locale
+        subscriber?.locale
       );
 
       if (!command.bridgeData) {
@@ -249,6 +257,7 @@ export class SendMessageEmail extends SendMessageBase {
           html = await inlineCss(html, {
             // Used for style sheet links that starts with / so should not be needed in our case.
             url: ' ',
+            applyLinkTags: false,
           });
         }
       }
@@ -261,8 +270,8 @@ export class SendMessageEmail extends SendMessageBase {
       await this.sendErrorHandlebars(command.job, error.message);
 
       return {
-        status: 'failed',
-        reason: DetailEnum.MESSAGE_CONTENT_NOT_GENERATED,
+        status: SendMessageStatus.FAILED,
+        errorMessage: DetailEnum.MESSAGE_CONTENT_NOT_GENERATED,
       };
     }
 
@@ -301,17 +310,24 @@ export class SendMessageEmail extends SendMessageBase {
           mime: attachment.mime,
           name: attachment.name,
           channels: attachment.channels,
+          cid: attachment.cid,
+          disposition: attachment.disposition,
         }
     );
 
+    if (!email || !integration) {
+      return await this.sendErrors(email, integration, message, command);
+    }
+
     const mailData: IEmailOptions = createMailData(
       {
+        // @ts-expect-error
         to: email,
         subject,
         html: (bridgeOutputs as EmailOutput)?.body || html,
-        from: integration?.credentials.from || 'no-reply@novu.co',
+        from: bridgeFrom?.email || integration?.credentials.from || 'no-reply@novu.co',
         attachments,
-        senderName,
+        senderName: bridgeFrom?.name || senderName,
         id: message._id,
         replyTo: replyToAddress,
         notificationDetails: {
@@ -331,14 +347,10 @@ export class SendMessageEmail extends SendMessageBase {
       mailData.payloadDetails = payload;
     }
 
-    if (!email || !integration) {
-      return await this.sendErrors(email, integration, message, command);
-    }
-
     return await this.sendMessage(integration, mailData, message, command);
   }
 
-  private async getReplyTo(command: SendMessageCommand, messageId: string): Promise<string | null> {
+  private async getReplyTo(command: SendMessageChannelCommand, messageId: string): Promise<string | null> {
     if (!command.step.replyCallback?.url) {
       await this.createExecutionDetails.execute(
         CreateExecutionDetailsCommand.create({
@@ -364,7 +376,6 @@ export class SendMessageEmail extends SendMessageBase {
       return getReplyToAddress(command.transactionId, environment._id, environment?.dns?.inboundParseDomain);
     } else {
       const detailEnum =
-        // eslint-disable-next-line no-nested-ternary
         !environment.dns?.mxRecordConfigured && !environment.dns?.inboundParseDomain
           ? DetailEnum.REPLY_CALLBACK_NOT_CONFIGURATION
           : !environment.dns?.mxRecordConfigured
@@ -388,10 +399,10 @@ export class SendMessageEmail extends SendMessageBase {
   }
 
   private async sendErrors(
-    email,
-    integration,
+    email: string | undefined,
+    integration: IntegrationEntity | undefined,
     message: MessageEntity,
-    command: SendMessageCommand
+    command: SendMessageChannelCommand
   ): Promise<SendMessageResult> {
     const errorMessage = 'Subscriber does not have an';
     const status = 'warning';
@@ -406,7 +417,7 @@ export class SendMessageEmail extends SendMessageBase {
         CreateExecutionDetailsCommand.create({
           ...CreateExecutionDetailsCommand.getDetailsFromJob(command.job),
           messageId: message._id,
-          detail: DetailEnum.SUBSCRIBER_NO_CHANNEL_DETAILS,
+          detail: DetailEnum.SUBSCRIBER_MISSING_EMAIL_ADDRESS,
           source: ExecutionDetailsSourceEnum.INTERNAL,
           status: ExecutionDetailsStatusEnum.FAILED,
           isTest: false,
@@ -415,8 +426,11 @@ export class SendMessageEmail extends SendMessageBase {
       );
 
       return {
-        status: 'failed',
-        reason: DetailEnum.SUBSCRIBER_NO_CHANNEL_DETAILS,
+        status: SendMessageStatus.SKIPPED,
+        deliveryLifecycleState: {
+          status: DeliveryLifecycleStatusEnum.SKIPPED,
+          detail: DeliveryLifecycleDetail.USER_MISSING_EMAIL,
+        },
       };
     }
 
@@ -438,22 +452,23 @@ export class SendMessageEmail extends SendMessageBase {
       );
 
       return {
-        status: 'failed',
-        reason: DetailEnum.SUBSCRIBER_NO_ACTIVE_INTEGRATION,
+        status: SendMessageStatus.FAILED,
+        errorMessage: DetailEnum.SUBSCRIBER_NO_ACTIVE_INTEGRATION,
       };
     }
 
     return {
-      status: 'failed',
-      reason: DetailEnum.PROVIDER_ERROR,
+      status: SendMessageStatus.FAILED,
+      errorMessage: DetailEnum.PROVIDER_ERROR,
     };
   }
 
+  @Instrument()
   private async sendMessage(
     integration: IntegrationEntity,
     mailData: IEmailOptions,
     message: MessageEntity,
-    command: SendMessageCommand
+    command: SendMessageChannelCommand
   ): Promise<SendMessageResult> {
     const mailFactory = new MailFactory();
     const mailHandler = mailFactory.getHandler(this.buildFactoryIntegration(integration), mailData.from);
@@ -467,6 +482,18 @@ export class SendMessageEmail extends SendMessageBase {
           command.step.stepId,
           integration.providerId
         ),
+      });
+
+      await this.sendWebhookMessage.execute({
+        eventType: WebhookEventEnum.MESSAGE_SENT,
+        objectType: WebhookObjectTypeEnum.MESSAGE,
+        payload: {
+          object: messageWebhookMapper(message, command.subscriberId, {
+            providerResponseId: result.id,
+          }),
+        },
+        organizationId: command.organizationId,
+        environmentId: command.environmentId,
       });
 
       Logger.verbose({ command }, 'Email message has been sent', LOG_CONTEXT);
@@ -488,8 +515,8 @@ export class SendMessageEmail extends SendMessageBase {
 
       if (!result?.id) {
         return {
-          status: 'failed',
-          reason: DetailEnum.PROVIDER_ERROR,
+          status: SendMessageStatus.FAILED,
+          errorMessage: DetailEnum.PROVIDER_ERROR,
         };
       }
 
@@ -503,7 +530,7 @@ export class SendMessageEmail extends SendMessageBase {
       );
 
       return {
-        status: 'success',
+        status: SendMessageStatus.SUCCESS,
       };
     } catch (error) {
       await this.sendErrorStatus(
@@ -520,9 +547,21 @@ export class SendMessageEmail extends SendMessageBase {
        * TODO: Handle this at the handler level globally
        */
       if (error?.isAxiosError && error.response) {
-        // eslint-disable-next-line no-ex-assign
         error = error.response;
       }
+
+      await this.sendWebhookMessage.execute({
+        eventType: WebhookEventEnum.MESSAGE_FAILED,
+        objectType: WebhookObjectTypeEnum.MESSAGE,
+        payload: {
+          object: messageWebhookMapper(message, command.subscriberId),
+          error: {
+            message: error.message || error.name || 'Error while sending email with provider',
+          },
+        },
+        organizationId: command.organizationId,
+        environmentId: command.environmentId,
+      });
 
       await this.createExecutionDetails.execute(
         CreateExecutionDetailsCommand.create({
@@ -533,49 +572,120 @@ export class SendMessageEmail extends SendMessageBase {
           status: ExecutionDetailsStatusEnum.FAILED,
           isTest: false,
           isRetry: false,
-          raw: JSON.stringify(error) === '{}' ? JSON.stringify({ message: error.message }) : JSON.stringify(error),
+          raw:
+            safeJsonStringify(error) === '{}' ? JSON.stringify({ message: error.message }) : safeJsonStringify(error),
         })
       );
 
       return {
-        status: 'failed',
-        reason: DetailEnum.PROVIDER_ERROR,
+        status: SendMessageStatus.FAILED,
+        errorMessage: DetailEnum.PROVIDER_ERROR,
       };
     }
   }
 
-  private async getOverrideLayoutId(command: SendMessageCommand) {
-    const overrideLayoutIdentifier = command.overrides?.layoutIdentifier;
+  @Instrument()
+  private async getOverrideLayoutId(command: SendMessageChannelCommand, isBridge: boolean) {
+    const { overrides, step } = command;
+    let layoutId: string | null | undefined;
+    let overrideSource: string | undefined;
 
-    if (overrideLayoutIdentifier) {
-      const layoutOverride = await this.layoutRepository.findOne(
-        {
-          _environmentId: command.environmentId,
-          identifier: overrideLayoutIdentifier,
-        },
-        '_id'
+    // Step 1: Check step-level override (highest priority)
+    const stepId = overrides?.steps?.[step._id ?? ''] ? step._id : step.stepId;
+    const stepOverrides = overrides?.steps?.[stepId ?? ''];
+    if (stepOverrides?.layoutId !== undefined) {
+      layoutId = stepOverrides.layoutId;
+      overrideSource = 'step';
+    }
+    // Step 2: Check channel-level override for email
+    else if (overrides?.channels?.email?.layoutId !== undefined) {
+      layoutId = overrides.channels.email.layoutId;
+      overrideSource = 'channel';
+    }
+    // Step 3: Check deprecated layoutIdentifier (backward compatibility)
+    else if (overrides?.layoutIdentifier) {
+      layoutId = overrides.layoutIdentifier;
+      overrideSource = 'layoutIdentifier';
+    }
+
+    // If no override is specified, return undefined (use step configuration)
+    if (layoutId === undefined) {
+      return undefined;
+    }
+
+    // If explicitly set to null, return null (no layout)
+    if (layoutId === null) {
+      return null;
+    }
+
+    if (isBridge) {
+      return layoutId;
+    }
+
+    // Look up layout by identifier or MongoDB ObjectId
+    try {
+      const layout = await this.getLayoutUseCaseV0.execute(
+        GetLayoutCommandV0.create({
+          layoutIdOrInternalId: layoutId,
+          environmentId: command.environmentId,
+          organizationId: command.organizationId,
+        })
       );
-      if (!layoutOverride) {
-        await this.createExecutionDetails.execute(
-          CreateExecutionDetailsCommand.create({
-            ...CreateExecutionDetailsCommand.getDetailsFromJob(command.job),
-            detail: DetailEnum.LAYOUT_NOT_FOUND,
-            source: ExecutionDetailsSourceEnum.INTERNAL,
-            status: ExecutionDetailsStatusEnum.FAILED,
-            isTest: false,
-            isRetry: false,
-            raw: JSON.stringify({
-              layoutIdentifier: overrideLayoutIdentifier,
-            }),
-          })
-        );
-      }
 
-      return layoutOverride?._id;
+      return layout._id;
+    } catch (error) {
+      await this.createExecutionDetails.execute(
+        CreateExecutionDetailsCommand.create({
+          ...CreateExecutionDetailsCommand.getDetailsFromJob(command.job),
+          detail: DetailEnum.LAYOUT_NOT_FOUND,
+          source: ExecutionDetailsSourceEnum.INTERNAL,
+          status: ExecutionDetailsStatusEnum.FAILED,
+          isTest: false,
+          isRetry: false,
+          raw: JSON.stringify({
+            layoutId,
+            overrideSource,
+            error: error.message,
+          }),
+        })
+      );
     }
   }
 
-  public buildFactoryIntegration(integration: IntegrationEntity, senderName?: string) {
+  /**
+   * Builds the merged provider overrides object for email sending.
+   *
+   * Provider-specific fields (cc/bcc/from/replyTo/etc.) can arrive in three shapes:
+   *   1. Deprecated channel bucket:     `overrides.email`
+   *   2. Deprecated flat provider key:  `overrides.<providerId>`
+   *   3. Modern nested providers shape: `overrides.providers.<providerId>`
+   *                                     `overrides.steps.<stepId>.providers.<providerId>`
+   *
+   * All three are merged (step-level wins) so values like `cc` reach `createMailData`
+   * and downstream providers (e.g. SendGrid `personalizations[0].cc`).
+   */
+  private buildEmailProviderOverrides(
+    command: SendMessageChannelCommand,
+    providerId: string | undefined,
+    stepId: string | undefined
+  ): Record<string, unknown> {
+    const deprecatedFlatEmailOverride = command.overrides?.email || {};
+    const deprecatedFlatProviderOverride = providerId
+      ? (command.overrides as Record<string, Record<string, unknown>>)?.[providerId] || {}
+      : {};
+    const providerOverride = providerId ? command.overrides?.providers?.[providerId] || {} : {};
+    const stepProviderOverride =
+      providerId && stepId ? command.overrides?.steps?.[stepId]?.providers?.[providerId] || {} : {};
+
+    return {
+      ...deprecatedFlatEmailOverride,
+      ...deprecatedFlatProviderOverride,
+      ...providerOverride,
+      ...stepProviderOverride,
+    };
+  }
+
+  public buildFactoryIntegration(integration: IntegrationEntity) {
     return {
       ...integration,
       credentials: {
@@ -586,7 +696,7 @@ export class SendMessageEmail extends SendMessageBase {
   }
 }
 
-export const createMailData = (options: IEmailOptions, overrides: Record<string, any>): IEmailOptions => {
+const createMailData = (options: IEmailOptions, overrides: Record<string, any>): IEmailOptions => {
   const filterDuplicate = (prev: string[], current: string) => (prev.includes(current) ? prev : [...prev, current]);
 
   let to = Array.isArray(options.to) ? options.to : [options.to];
@@ -610,7 +720,7 @@ export const createMailData = (options: IEmailOptions, overrides: Record<string,
   };
 };
 
-export function getReplyToAddress(transactionId: string, environmentId: string, inboundParseDomain: string) {
+function getReplyToAddress(transactionId: string, environmentId: string, inboundParseDomain: string) {
   const userNamePrefix = 'parse';
   const userNameDelimiter = '-nv-e=';
 

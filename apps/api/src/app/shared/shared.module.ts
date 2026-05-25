@@ -1,13 +1,48 @@
-/* eslint-disable global-require */
 import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
 import {
+  analyticsService,
+  CacheServiceHealthIndicator,
+  CloudflareSchedulerService,
+  ComputeJobWaitDurationService,
+  CreateExecutionDetails,
+  cacheService,
+  clickHouseService,
+  createNestLoggingModuleOptions,
+  DalServiceHealthIndicator,
+  DeliveryTrendCountsRepository,
+  ExecuteBridgeRequest,
+  ExecuteFrameworkRequest,
+  ExecuteStepResolverRequest,
+  featureFlagsService,
+  GetDecryptedSecretKey,
+  HttpClientService,
+  InMemoryLRUCacheService,
+  InvalidateCacheService,
+  LoggerModule,
+  QueuesModule,
+  RequestLogRepository,
+  SafeOutboundHttpService,
+  StepRunRepository,
+  storageService,
+  TraceLogRepository,
+  TraceRollupRepository,
+  WorkflowRunCountRepository,
+  WorkflowRunRepository,
+} from '@novu/application-generic';
+import {
+  AgentIntegrationRepository,
+  AgentRepository,
   ChangeRepository,
   CommunityMemberRepository,
   CommunityOrganizationRepository,
   CommunityUserRepository,
   ControlValuesRepository,
   DalService,
+  DomainRepository,
+  DomainRouteRepository,
   EnvironmentRepository,
+  EnvironmentVariableRepository,
   ExecutionDetailsRepository,
   FeedRepository,
   IntegrationRepository,
@@ -28,25 +63,7 @@ import {
   UserRepository,
   WorkflowOverrideRepository,
 } from '@novu/dal';
-import {
-  analyticsService,
-  cacheService,
-  CacheServiceHealthIndicator,
-  ComputeJobWaitDurationService,
-  CreateExecutionDetails,
-  createNestLoggingModuleOptions,
-  DalServiceHealthIndicator,
-  ExecuteBridgeRequest,
-  featureFlagsService,
-  GetDecryptedSecretKey,
-  InvalidateCacheService,
-  LoggerModule,
-  QueuesModule,
-  storageService,
-} from '@novu/application-generic';
-
 import { isClerkEnabled, JobTopicNameEnum } from '@novu/shared';
-import { JwtModule } from '@nestjs/jwt';
 import packageJson from '../../../package.json';
 
 function getDynamicAuthProviders() {
@@ -98,6 +115,11 @@ const DAL_MODELS = [
   WorkflowOverrideRepository,
   ControlValuesRepository,
   PreferencesRepository,
+  EnvironmentVariableRepository,
+  AgentRepository,
+  AgentIntegrationRepository,
+  DomainRepository,
+  DomainRouteRepository,
 ];
 
 const dalService = {
@@ -110,20 +132,41 @@ const dalService = {
   },
 };
 
+const ANALYTICS_PROVIDERS = [
+  // Repositories
+  RequestLogRepository,
+  TraceLogRepository,
+  StepRunRepository,
+  WorkflowRunRepository,
+  WorkflowRunCountRepository,
+  TraceRollupRepository,
+  DeliveryTrendCountsRepository,
+
+  // Services
+  clickHouseService,
+];
+
 const PROVIDERS = [
   analyticsService,
   cacheService,
   CacheServiceHealthIndicator,
+  CloudflareSchedulerService,
   ComputeJobWaitDurationService,
   dalService,
   DalServiceHealthIndicator,
   featureFlagsService,
+  InMemoryLRUCacheService,
   InvalidateCacheService,
   storageService,
   ...DAL_MODELS,
   CreateExecutionDetails,
   ExecuteBridgeRequest,
+  ExecuteFrameworkRequest,
+  ExecuteStepResolverRequest,
   GetDecryptedSecretKey,
+  HttpClientService,
+  SafeOutboundHttpService,
+  ...ANALYTICS_PROVIDERS,
 ];
 
 const IMPORTS = [
@@ -137,6 +180,7 @@ const IMPORTS = [
     createNestLoggingModuleOptions({
       serviceName: packageJson.name,
       version: packageJson.version,
+      silent: !!process.env.CI,
     })
   ),
 ];

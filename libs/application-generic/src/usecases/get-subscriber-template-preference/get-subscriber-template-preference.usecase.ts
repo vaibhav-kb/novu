@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   MessageTemplateRepository,
   NotificationTemplateEntity,
@@ -16,14 +16,13 @@ import {
   ITemplateConfiguration,
   PreferenceOverrideSourceEnum,
   PreferencesTypeEnum,
+  SeverityLevelEnum,
   StepTypeEnum,
 } from '@novu/shared';
-
-import { GetSubscriberTemplatePreferenceCommand } from './get-subscriber-template-preference.command';
-
-import { GetPreferences } from '../get-preferences';
 import { Instrument, InstrumentUsecase } from '../../instrumentation';
 import { buildSubscriberKey, CachedResponse } from '../../services';
+import { GetPreferences } from '../get-preferences';
+import { GetSubscriberTemplatePreferenceCommand } from './get-subscriber-template-preference.command';
 
 const PRIORITY_ORDER = [
   PreferenceOverrideSourceEnum.TEMPLATE,
@@ -43,7 +42,7 @@ export class GetSubscriberTemplatePreference {
 
   @InstrumentUsecase()
   async execute(command: GetSubscriberTemplatePreferenceCommand): Promise<ISubscriberPreferenceResponse> {
-    const subscriber = await this.getSubscriber(command);
+    const subscriber: Pick<SubscriberEntity, '_id'> | null = command.subscriber ?? (await this.getSubscriber(command));
 
     const initialChannels = await this.getChannels(command);
 
@@ -94,7 +93,19 @@ export class GetSubscriberTemplatePreference {
       organizationId: command.organizationId,
       subscriberId,
       templateId: command.template._id,
+      contextKeys: command.contextKeys,
     });
+
+    if (!subscriberWorkflowPreference) {
+      const emptyWorkflowChannels = GetPreferences.mapWorkflowPreferencesToChannelPreferences(undefined);
+
+      return {
+        channels: emptyWorkflowChannels,
+        critical: undefined,
+        type: PreferencesTypeEnum.SUBSCRIBER_WORKFLOW,
+        enabled: true,
+      };
+    }
 
     const subscriberWorkflowChannels = GetPreferences.mapWorkflowPreferencesToChannelPreferences(
       subscriberWorkflowPreference.preferences
@@ -166,12 +177,15 @@ export class GetSubscriberTemplatePreference {
     if (stepMissingTemplate) {
       const messageIds = activeSteps.map((step) => step._templateId);
 
-      const messageTemplates = await this.messageTemplateRepository.find({
-        _environmentId: command.environmentId,
-        _id: {
-          $in: messageIds,
+      const messageTemplates = await this.messageTemplateRepository.find(
+        {
+          _environmentId: command.environmentId,
+          _id: {
+            $in: messageIds,
+          },
         },
-      });
+        '_id type'
+      );
 
       return [
         ...new Set(messageTemplates.map((messageTemplate) => messageTemplate.type) as unknown as ChannelTypeEnum[]),
@@ -199,12 +213,19 @@ export class GetSubscriberTemplatePreference {
         subscriberId: command.subscriberId,
       }),
   })
-  private async getSubscriber(command: GetSubscriberTemplatePreferenceCommand): Promise<SubscriberEntity | null> {
+  private async getSubscriber(
+    command: GetSubscriberTemplatePreferenceCommand
+  ): Promise<Pick<SubscriberEntity, '_id'> | null> {
     if (command.subscriber) {
       return command.subscriber;
     }
 
-    const subscriber = await this.subscriberRepository.findBySubscriberId(command.environmentId, command.subscriberId);
+    const subscriber: Pick<SubscriberEntity, '_id'> | null = await this.subscriberRepository.findBySubscriberId(
+      command.environmentId,
+      command.subscriberId,
+      true,
+      '_id'
+    );
 
     if (!subscriber) {
       throw new BadRequestException(`Subscriber ${command.subscriberId} not found`);
@@ -228,7 +249,6 @@ function updateOverrideReasons(
   const notFoundFlag = -1;
   const existsInOverrideReasons = index !== notFoundFlag;
   if (existsInOverrideReasons) {
-    // eslint-disable-next-line no-param-reassign
     overrideReasons[index] = currentOverride;
   } else {
     overrideReasons.push(currentOverride);
@@ -304,5 +324,7 @@ export function mapTemplateConfiguration(template: NotificationTemplateEntity): 
     triggers: template.triggers,
     ...(template.data ? { data: template.data } : {}),
     updatedAt: template.updatedAt,
+    createdAt: template.createdAt,
+    severity: template.severity ?? SeverityLevelEnum.NONE,
   };
 }

@@ -1,10 +1,10 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { DirectionEnum } from '@novu/shared';
 import { ClassConstructor, plainToInstance } from 'class-transformer';
 import {
   ClientSession,
   FilterQuery,
   Model,
+  mongo,
   ProjectionType,
   QueryOptions,
   QueryWithHelpers,
@@ -14,6 +14,13 @@ import {
 } from 'mongoose';
 import { DalException } from '../shared';
 
+/**
+ * @deprecated Use BaseRepositoryV2 instead. BaseRepositoryV2 enforces required
+ * field selection via a mandatory `select` parameter and provides auto-inferred
+ * return types based on the selected fields (Pick<Entity, Keys>).
+ * All existing repositories remain on this class; only new repositories should
+ * extend BaseRepositoryV2.
+ */
 export class BaseRepository<T_DBModel, T_MappedEntity, T_Enforcement> {
   public _model: Model<T_DBModel>;
 
@@ -45,10 +52,72 @@ export class BaseRepository<T_DBModel, T_MappedEntity, T_Enforcement> {
     return new Types.ObjectId(value);
   }
 
-  async count(query: FilterQuery<T_DBModel> & T_Enforcement, limit?: number): Promise<number> {
+  /**
+   * Builds a MongoDB query for exact context key matching in READ operations.
+   * Uses $all and $size operators for order-independent array matching.
+   */
+  public buildContextExactMatchQuery(
+    contextKeys?: string[],
+    options?: {
+      enabled?: boolean;
+      strictEmpty?: boolean;
+    }
+  ): Record<string, unknown> {
+    const { enabled = true, strictEmpty = false } = options ?? {};
+
+    if (!enabled) {
+      return {};
+    }
+
+    // Match records with no context (default/empty context)
+    if (contextKeys === undefined || contextKeys.length === 0) {
+      // For collections created after context was introduced, we always write contextKeys: []
+      // For older collections, the field may not exist (treated as default context)
+      if (strictEmpty) {
+        return { contextKeys: [] };
+      }
+
+      // Match both missing field (legacy) and empty array (current)
+      return {
+        $or: [{ contextKeys: { $exists: false } }, { contextKeys: [] }],
+      };
+    }
+
+    // Sort defensively to ensure consistent matching regardless of input order
+    // This protects against unsorted input and enables future query optimization
+    const sortedKeys = [...contextKeys].sort();
+
+    // Use $all + $size for order-independent array matching
+    // After data migration to guarantee sorted storage, this can be simplified to:
+    // return { contextKeys: sortedKeys };  // Direct equality (faster, uses index)
+    return {
+      contextKeys: { $all: sortedKeys, $size: sortedKeys.length },
+    };
+  }
+
+  async count(
+    query: FilterQuery<T_DBModel> & T_Enforcement,
+    limit?: number,
+    readPreference?: 'secondaryPreferred' | 'primary'
+  ): Promise<number> {
     return this.MongooseModel.countDocuments(query, {
       limit,
+      readPreference: readPreference || 'primary',
     });
+  }
+
+  private async getCountWithLimit(
+    query: FilterQuery<T_DBModel> & T_Enforcement,
+    maxLimit: number = 50001
+  ): Promise<{ count: number; hasMore: boolean }> {
+    const result = await this.count(query, maxLimit, 'secondaryPreferred');
+    const count = result;
+    const hasMore = count === maxLimit;
+
+    return {
+      count: hasMore ? maxLimit - 1 : count,
+      hasMore,
+    };
   }
 
   async estimatedDocumentCount(): Promise<number> {
@@ -62,11 +131,30 @@ export class BaseRepository<T_DBModel, T_MappedEntity, T_Enforcement> {
   async findOne(
     query: FilterQuery<T_DBModel> & T_Enforcement,
     select?: ProjectionType<T_MappedEntity>,
-    options: { readPreference?: 'secondaryPreferred' | 'primary'; query?: QueryOptions<T_DBModel> } = {}
+    options: {
+      readPreference?: 'secondaryPreferred' | 'primary';
+      query?: QueryOptions<T_DBModel>;
+      session?: ClientSession | null;
+      enhanceQuery?: <TQuery extends QueryWithHelpers<T_DBModel | null, T_DBModel, {}, T_DBModel, 'findOne'>>(
+        queryBuilder: TQuery
+      ) => QueryWithHelpers<T_DBModel | null, T_DBModel, {}, T_DBModel, 'findOne'>;
+    } = {}
   ): Promise<T_MappedEntity | null> {
-    const data = await this.MongooseModel.findOne(query, select, options.query).read(
-      options.readPreference || 'primary'
+    const { session, ...queryOptions } = options;
+
+    let queryBuilder = this.MongooseModel.findOne(query, select, queryOptions.query).read(
+      queryOptions.readPreference || 'primary'
     );
+
+    if (session) {
+      queryBuilder.session(session);
+    }
+
+    if (options.enhanceQuery) {
+      queryBuilder = options.enhanceQuery(queryBuilder) as typeof queryBuilder;
+    }
+
+    const data = await queryBuilder;
     if (!data) return null;
 
     return this.mapEntity(data.toObject());
@@ -75,12 +163,15 @@ export class BaseRepository<T_DBModel, T_MappedEntity, T_Enforcement> {
   async findOneAndUpdate(
     query: FilterQuery<T_DBModel> & T_Enforcement,
     update: UpdateQuery<T_DBModel>,
-    options: QueryOptions<T_DBModel> = {}
+    options: QueryOptions<T_DBModel> & { session?: ClientSession | null } = {}
   ): Promise<T_MappedEntity | null> {
+    const { session, ...updateOptions } = options;
+
     const data = await this.MongooseModel.findOneAndUpdate(query, update, {
-      ...options,
-      upsert: options.upsert || false,
-      new: options.new || false,
+      ...updateOptions,
+      upsert: updateOptions.upsert || false,
+      new: updateOptions.new || false,
+      ...(session && { session }),
     });
 
     if (!data) return null;
@@ -88,13 +179,19 @@ export class BaseRepository<T_DBModel, T_MappedEntity, T_Enforcement> {
     return this.mapEntity(data.toObject());
   }
 
-  async delete(query: FilterQuery<T_DBModel> & T_Enforcement): Promise<{
+  async delete(
+    query: FilterQuery<T_DBModel> & T_Enforcement,
+    options: { session?: ClientSession | null } = {}
+  ): Promise<{
     /** Indicates whether this writes result was acknowledged. If not, then all other members of this result will be undefined. */
     acknowledged: boolean;
     /** The number of documents that were deleted */
     deletedCount: number;
   }> {
-    return await this.MongooseModel.deleteMany(query);
+    const { session } = options;
+    const deleteOptions = session ? { session } : {};
+
+    return await this.MongooseModel.deleteMany(query, deleteOptions);
   }
 
   async findOneAndDelete(query: FilterQuery<T_DBModel> & T_Enforcement): Promise<T_MappedEntity | null> {
@@ -107,15 +204,29 @@ export class BaseRepository<T_DBModel, T_MappedEntity, T_Enforcement> {
   async find(
     query: FilterQuery<T_DBModel> & T_Enforcement,
     select: ProjectionType<T_MappedEntity> = '',
-    options: { limit?: number; sort?: any; skip?: number } = {}
+    options: {
+      limit?: number;
+      sort?: any;
+      skip?: number;
+      session?: ClientSession | null;
+      readPreference?: 'secondaryPreferred' | 'primary';
+    } = {}
   ): Promise<T_MappedEntity[]> {
-    const data = await this.MongooseModel.find(query, select, {
-      sort: options.sort || null,
+    const { session, ...queryOptions } = options;
+
+    const queryBuilder = this.MongooseModel.find(query, select, {
+      sort: queryOptions.sort || null,
     })
-      .skip(options.skip as number)
-      .limit(options.limit as number)
-      .lean()
-      .exec();
+      .skip(queryOptions.skip as number)
+      .limit(queryOptions.limit as number)
+      .read(queryOptions.readPreference || 'primary')
+      .lean();
+
+    if (session) {
+      queryBuilder.session(session);
+    }
+
+    const data = await queryBuilder.exec();
 
     return this.mapEntities(data);
   }
@@ -245,12 +356,19 @@ export class BaseRepository<T_DBModel, T_MappedEntity, T_Enforcement> {
     };
   }
 
-  async create(data: FilterQuery<T_DBModel> & T_Enforcement, options: IOptions = {}): Promise<T_MappedEntity> {
+  async create(
+    data: FilterQuery<T_DBModel> & T_Enforcement,
+    options: IOptions & { session?: ClientSession | null } = {}
+  ): Promise<T_MappedEntity> {
+    const { session, ...saveOptions } = options;
     const newEntity = new this.MongooseModel(data);
 
-    const saveOptions = options?.writeConcern ? { w: options?.writeConcern } : {};
+    const mongooseOptions = saveOptions?.writeConcern ? { w: saveOptions?.writeConcern } : {};
+    if (session) {
+      Object.assign(mongooseOptions, { session });
+    }
 
-    const saved = await newEntity.save(saveOptions);
+    const saved = await newEntity.save(mongooseOptions);
 
     return this.mapEntity(saved);
   }
@@ -282,14 +400,19 @@ export class BaseRepository<T_DBModel, T_MappedEntity, T_Enforcement> {
   async update(
     query: FilterQuery<T_DBModel> & T_Enforcement,
     updateBody: UpdateQuery<T_DBModel>,
-    options: QueryOptions<T_DBModel> = {}
+    options: Omit<mongo.UpdateOptions, 'session'> & {
+      timestamps?: boolean;
+      strict?: boolean | 'throw';
+      session?: ClientSession | null;
+    } = {}
   ): Promise<{
     matched: number;
     modified: number;
   }> {
+    const { session, ...restOptions } = options;
     const saved = await this.MongooseModel.updateMany(query, updateBody, {
-      multi: true,
-      ...options,
+      ...restOptions,
+      ...(session && { session }),
     });
 
     return {
@@ -350,8 +473,26 @@ export class BaseRepository<T_DBModel, T_MappedEntity, T_Enforcement> {
    *
    * Refer to https://mongoosejs.com/docs/transactions.html#note-about-parallelism-in-transactions
    */
-  async withTransaction(fn: Parameters<ClientSession['withTransaction']>[0]) {
-    return (await this._model.db.startSession()).withTransaction(fn);
+  async withTransaction(fn: (session: ClientSession | null) => Promise<any>) {
+    const session = await this._model.db.startSession();
+    try {
+      return await session.withTransaction(fn);
+    } catch (error) {
+      // Check if the error is related to replica set requirement
+      const errorMessage = error?.message?.toLowerCase() || '';
+      if (
+        errorMessage.includes('replica set') ||
+        errorMessage.includes('transaction') ||
+        error.codeName === 'IllegalOperation'
+      ) {
+        // MongoDB is not running in replica set mode, execute without transaction
+        return await fn(null);
+      }
+
+      throw error;
+    } finally {
+      await session.endSession().catch(() => {});
+    }
   }
 
   async findWithCursorBasedPagination({
@@ -374,7 +515,13 @@ export class BaseRepository<T_DBModel, T_MappedEntity, T_Enforcement> {
     paginateField: string;
     enhanceQuery?: (query: QueryWithHelpers<Array<T_DBModel>, T_DBModel>) => any;
     includeCursor?: boolean;
-  }): Promise<{ data: T_MappedEntity[]; next: string | null; previous: string | null }> {
+  }): Promise<{
+    data: T_MappedEntity[];
+    next: string | null;
+    previous: string | null;
+    totalCount: number;
+    totalCountCapped: boolean;
+  }> {
     if (before && after) {
       throw new DalException('Cannot specify both "before" and "after" cursors at the same time.');
     }
@@ -437,8 +584,12 @@ export class BaseRepository<T_DBModel, T_MappedEntity, T_Enforcement> {
       builder = enhanceQuery(builder);
     }
 
-    const rawResults = await builder.exec();
+    // Run find query and count aggregation in parallel
+    const [rawResults, countResult] = await Promise.all([builder.exec(), this.getCountWithLimit(query, 50001)]);
+
     const hasExtraItem = rawResults.length > limit;
+    const totalCount = countResult.count;
+    const hasMore = countResult.hasMore;
 
     let startIndex = 0;
     let endIndex = limit;
@@ -462,6 +613,8 @@ export class BaseRepository<T_DBModel, T_MappedEntity, T_Enforcement> {
         data: [],
         next: null,
         previous: null,
+        totalCount: totalCount,
+        totalCountCapped: hasMore,
       };
     }
 
@@ -533,7 +686,13 @@ export class BaseRepository<T_DBModel, T_MappedEntity, T_Enforcement> {
       data: this.mapEntities(pageResults),
       next: nextCursor,
       previous: prevCursor,
+      totalCount: totalCount,
+      totalCountCapped: hasMore,
     };
+  }
+
+  protected regExpEscape(literalString: string): string {
+    return literalString.replace(/[-[\]{}()*+!<=:?./\\^$|#\s,]/g, '\\$&');
   }
 }
 

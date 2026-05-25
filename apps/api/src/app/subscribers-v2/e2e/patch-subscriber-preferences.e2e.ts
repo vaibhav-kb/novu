@@ -1,16 +1,20 @@
+import { Novu } from '@novu/api';
+import {
+  BulkUpdateSubscriberPreferencesDto,
+  PatchSubscriberPreferencesDto,
+  SubscriberResponseDto,
+} from '@novu/api/models/components';
+import { buildSlug } from '@novu/application-generic';
+import { NotificationTemplateEntity } from '@novu/dal';
+import { ShortIsPrefixEnum } from '@novu/shared';
+import { UserSession } from '@novu/testing';
 import { expect } from 'chai';
 import { randomBytes } from 'crypto';
-import { UserSession } from '@novu/testing';
-import { NotificationTemplateEntity } from '@novu/dal';
-import { SubscriberResponseDto, PatchSubscriberPreferencesDto } from '@novu/api/models/components';
-import { Novu } from '@novu/api';
-import { ShortIsPrefixEnum } from '@novu/shared';
 import {
   expectSdkExceptionGeneric,
   expectSdkValidationExceptionGeneric,
   initNovuClassSdk,
 } from '../../shared/helpers/e2e/sdk/e2e-sdk.helper';
-import { buildSlug } from '../../shared/helpers/build-slug';
 
 let session: UserSession;
 
@@ -20,6 +24,7 @@ describe('Patch Subscriber Preferences - /subscribers/:subscriberId/preferences 
   let workflow: NotificationTemplateEntity;
 
   beforeEach(async () => {
+    (process.env as any).IS_CONTEXT_PREFERENCES_ENABLED = 'true';
     const uuid = randomBytes(4).toString('hex');
     session = new UserSession();
     await session.initialize();
@@ -28,6 +33,10 @@ describe('Patch Subscriber Preferences - /subscribers/:subscriberId/preferences 
     workflow = await session.createTemplate({
       noFeedId: true,
     });
+  });
+
+  afterEach(() => {
+    delete (process.env as any).IS_CONTEXT_PREFERENCES_ENABLED;
   });
 
   it('should patch workflow channel preferences', async () => {
@@ -135,6 +144,251 @@ describe('Patch Subscriber Preferences - /subscribers/:subscriberId/preferences 
       // TODO: fix in SDK util
       expect(e).to.be.an.instanceOf(Error);
     }
+  });
+
+  it('should bulk update multiple workflow preferences', async () => {
+    const workflow2 = await session.createTemplate({
+      noFeedId: true,
+    });
+    const workflow3 = await session.createTemplate({
+      noFeedId: true,
+    });
+
+    const bulkUpdateData: BulkUpdateSubscriberPreferencesDto = {
+      preferences: [
+        {
+          workflowId: workflow._id,
+          channels: {
+            email: false,
+            inApp: true,
+            sms: false,
+          },
+        },
+        {
+          workflowId: workflow2._id,
+          channels: {
+            email: true,
+            inApp: false,
+            push: true,
+          },
+        },
+        {
+          workflowId: workflow3.triggers[0].identifier, // Test with trigger identifier
+          channels: {
+            email: false,
+            inApp: true,
+            chat: true,
+          },
+        },
+      ],
+    };
+
+    const response = await novuClient.subscribers.preferences.bulkUpdate(bulkUpdateData, subscriber.subscriberId);
+
+    expect(response.result).to.be.an('array');
+    expect(response.result).to.have.lengthOf(3);
+
+    // Verify each preference was updated correctly
+    const preferences = response.result;
+
+    const pref1 = preferences.find((p) => p.workflow?.id === workflow._id);
+    expect(pref1).to.exist;
+    expect(pref1?.channels.email).to.equal(false);
+    expect(pref1?.channels.inApp).to.equal(true);
+
+    const pref2 = preferences.find((p) => p.workflow?.id === workflow2._id);
+    expect(pref2).to.exist;
+    expect(pref2?.channels.email).to.equal(true);
+    expect(pref2?.channels.inApp).to.equal(false);
+
+    const pref3 = preferences.find((p) => p.workflow?.id === workflow3._id);
+    expect(pref3).to.exist;
+    expect(pref3?.channels.email).to.equal(false);
+    expect(pref3?.channels.inApp).to.equal(true);
+  });
+
+  it('should return 422 when bulk updating with more than 100 preferences', async () => {
+    const preferences = Array.from({ length: 101 }, (_, i) => ({
+      workflowId: workflow._id,
+      channels: {
+        email: i % 2 === 0,
+      },
+    }));
+
+    const bulkUpdateData = { preferences };
+
+    const { error } = await expectSdkValidationExceptionGeneric(() =>
+      novuClient.subscribers.preferences.bulkUpdate(bulkUpdateData, subscriber.subscriberId)
+    );
+
+    expect(error?.statusCode).to.equal(422);
+    expect(error?.message).to.include('Validation Error');
+  });
+
+  it('should return 404 when bulk updating preferences for non-existent subscriber', async () => {
+    const invalidSubscriberId = `non-existent-${randomBytes(2).toString('hex')}`;
+    const bulkUpdateData = {
+      preferences: [
+        {
+          workflowId: workflow._id,
+          channels: {
+            email: false,
+          },
+        },
+      ],
+    };
+
+    const { error } = await expectSdkExceptionGeneric(() =>
+      novuClient.subscribers.preferences.bulkUpdate(bulkUpdateData, invalidSubscriberId)
+    );
+
+    expect(error?.statusCode).to.equal(404);
+  });
+
+  it('should return 404 when bulk updating with non-existent workflow ids', async () => {
+    const bulkUpdateData = {
+      preferences: [
+        {
+          workflowId: 'non-existent-workflow-id',
+          channels: {
+            email: false,
+          },
+        },
+      ],
+    };
+
+    const { error } = await expectSdkExceptionGeneric(() =>
+      novuClient.subscribers.preferences.bulkUpdate(bulkUpdateData, subscriber.subscriberId)
+    );
+
+    expect(error?.statusCode).to.equal(404);
+    expect(error?.message).to.include('Workflows with ids: non-existent-workflow-id not found');
+  });
+
+  it('should create workflow preference with context', async () => {
+    const patchData: PatchSubscriberPreferencesDto = {
+      workflowId: workflow._id,
+      channels: {
+        email: false,
+        inApp: true,
+      },
+      context: { tenant: 'acme' },
+    };
+
+    const response = await novuClient.subscribers.preferences.update(patchData, subscriber.subscriberId);
+
+    expect(response.result.workflows).to.have.lengthOf(1);
+    expect(response.result.workflows[0].channels).to.deep.equal({ inApp: true, email: false });
+  });
+
+  it('should patch workflow preferences with organization context as string id (dashboard shape)', async () => {
+    const organizationContextId = `org_ctx_${randomBytes(6).toString('hex')}`;
+
+    const patchRes = await session.testAgent
+      .patch(`/v2/subscribers/${subscriber.subscriberId}/preferences`)
+      .set('Authorization', `ApiKey ${session.apiKey}`)
+      .send({
+        workflowId: workflow._id,
+        channels: { email: false, in_app: true },
+        context: { organization: organizationContextId },
+      });
+
+    expect(patchRes.status).to.equal(200);
+
+    const listResponse = await novuClient.subscribers.preferences.list({
+      subscriberId: subscriber.subscriberId,
+      contextKeys: [`organization:${organizationContextId}`],
+    });
+
+    expect(listResponse.result.workflows).to.have.lengthOf(1);
+    expect(listResponse.result.workflows[0].workflow.identifier).to.equal(workflow.triggers[0].identifier);
+    expect(listResponse.result.workflows[0].channels).to.deep.include({ email: false, inApp: true });
+  });
+
+  it('should patch workflow preferences with organization context as { id, data } object', async () => {
+    const organizationContextId = `org_ctx_${randomBytes(6).toString('hex')}`;
+
+    const patchRes = await session.testAgent
+      .patch(`/v2/subscribers/${subscriber.subscriberId}/preferences`)
+      .set('Authorization', `ApiKey ${session.apiKey}`)
+      .send({
+        workflowId: workflow._id,
+        channels: { email: true, in_app: false },
+        context: { organization: { id: organizationContextId, data: { tier: 'pro' } } },
+      });
+
+    expect(patchRes.status).to.equal(200);
+
+    const listResponse = await novuClient.subscribers.preferences.list({
+      subscriberId: subscriber.subscriberId,
+      contextKeys: [`organization:${organizationContextId}`],
+    });
+
+    expect(listResponse.result.workflows).to.have.lengthOf(1);
+    expect(listResponse.result.workflows[0].workflow.identifier).to.equal(workflow.triggers[0].identifier);
+    expect(listResponse.result.workflows[0].channels).to.deep.include({ email: true, inApp: false });
+  });
+
+  it('should create separate preferences for different contexts', async () => {
+    // Create preference for context A
+    await novuClient.subscribers.preferences.update(
+      {
+        workflowId: workflow._id,
+        channels: { email: false },
+        context: { tenant: 'acme' },
+      },
+      subscriber.subscriberId
+    );
+
+    // Create preference for context B
+    await novuClient.subscribers.preferences.update(
+      {
+        workflowId: workflow._id,
+        channels: { email: true },
+        context: { tenant: 'globex' },
+      },
+      subscriber.subscriberId
+    );
+
+    // Both should coexist - verify by listing with different contextKeys
+    const responseA = await novuClient.subscribers.preferences.list({
+      subscriberId: subscriber.subscriberId,
+      contextKeys: ['tenant:acme'],
+    });
+    expect(responseA.result.workflows[0].channels.email).to.equal(false);
+
+    const responseB = await novuClient.subscribers.preferences.list({
+      subscriberId: subscriber.subscriberId,
+      contextKeys: ['tenant:globex'],
+    });
+    expect(responseB.result.workflows[0].channels.email).to.equal(true);
+  });
+
+  it('should bulk update with context', async () => {
+    const bulkUpdateData: BulkUpdateSubscriberPreferencesDto = {
+      context: { tenant: 'acme' },
+      preferences: [
+        {
+          workflowId: workflow._id,
+          channels: {
+            email: false,
+            inApp: true,
+          },
+        },
+      ],
+    };
+
+    const response = await novuClient.subscribers.preferences.bulkUpdate(bulkUpdateData, subscriber.subscriberId);
+
+    expect(response.result).to.have.lengthOf(1);
+    expect(response.result[0].channels.email).to.equal(false);
+
+    // Verify it's stored with context
+    const listResponse = await novuClient.subscribers.preferences.list({
+      subscriberId: subscriber.subscriberId,
+      contextKeys: ['tenant:acme'],
+    });
+    expect(listResponse.result.workflows[0].channels.email).to.equal(false);
   });
 });
 

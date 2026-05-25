@@ -1,7 +1,6 @@
-/* eslint-disable max-len */
 import { JSX } from 'solid-js';
 
-export const MarkAsUnarchived = (props?: JSX.HTMLAttributes<SVGSVGElement>) => {
+export const MarkAsUnarchived = (props?: JSX.SvgSVGAttributes<SVGSVGElement>) => {
   return (
     <svg viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
       <path

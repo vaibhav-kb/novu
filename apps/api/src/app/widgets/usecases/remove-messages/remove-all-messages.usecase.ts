@@ -1,24 +1,23 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
-  MessageEntity,
-  DalException,
-  MessageRepository,
-  SubscriberRepository,
-  SubscriberEntity,
-  FeedRepository,
-  EnforceEnvId,
-} from '@novu/dal';
-import { ChannelTypeEnum, WebSocketEventEnum } from '@novu/shared';
-import {
-  WebSocketsQueueService,
   AnalyticsService,
-  InvalidateCacheService,
   buildFeedKey,
   buildMessageCountKey,
+  InvalidateCacheService,
+  WebSocketsQueueService,
 } from '@novu/application-generic';
-
-import { RemoveAllMessagesCommand } from './remove-all-messages.command';
+import {
+  DalException,
+  EnforceEnvId,
+  FeedRepository,
+  MessageEntity,
+  MessageRepository,
+  SubscriberEntity,
+  SubscriberRepository,
+} from '@novu/dal';
+import { ChannelTypeEnum, WebSocketEventEnum } from '@novu/shared';
 import { MarkEnum } from '../mark-message-as/mark-message-as.command';
+import { RemoveAllMessagesCommand } from './remove-all-messages.command';
 
 @Injectable()
 export class RemoveAllMessages {
@@ -61,12 +60,6 @@ export class RemoveAllMessages {
           this.updateServices(command, subscriber, MarkEnum.SEEN),
           this.updateServices(command, subscriber, MarkEnum.READ),
           this.invalidateCache.invalidateQuery({
-            key: buildFeedKey().invalidate({
-              subscriberId: command.subscriberId,
-              _environmentId: command.environmentId,
-            }),
-          }),
-          this.invalidateCache.invalidateQuery({
             key: buildMessageCountKey().invalidate({
               subscriberId: command.subscriberId,
               _environmentId: command.environmentId,
@@ -102,6 +95,7 @@ export class RemoveAllMessages {
         event: eventMessage,
         userId: subscriber._id,
         _environmentId: subscriber._environmentId,
+        contextKeys: [],
       },
       groupId: subscriber._organizationId,
     });

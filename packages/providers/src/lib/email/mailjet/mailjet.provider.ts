@@ -1,13 +1,13 @@
 import { EmailProviderIdEnum } from '@novu/shared';
 import {
   ChannelTypeEnum,
+  CheckIntegrationResponseEnum,
+  EmailEventStatusEnum,
+  ICheckIntegrationResponse,
+  IEmailEventBody,
   IEmailOptions,
   IEmailProvider,
   ISendMessageSuccessResponse,
-  ICheckIntegrationResponse,
-  CheckIntegrationResponseEnum,
-  IEmailEventBody,
-  EmailEventStatusEnum,
 } from '@novu/stateless';
 import { Client, type SendEmailV3_1 } from 'node-mailjet';
 import { BaseProvider, CasingEnum } from '../../../base.provider';
@@ -118,6 +118,7 @@ export class MailjetEmailProvider extends BaseProvider implements IEmailProvider
           Base64Content: attachment.file.toString('base64'),
           ContentID: attachment.cid,
         })),
+      ...(options.headers && Object.keys(options.headers).length > 0 && { Headers: options.headers }),
     }).body;
 
     if (options.replyTo) {
@@ -139,7 +140,6 @@ export class MailjetEmailProvider extends BaseProvider implements IEmailProvider
 
   parseEventBody(body: any | any[], identifier: string): IEmailEventBody | undefined {
     if (Array.isArray(body)) {
-      // eslint-disable-next-line no-param-reassign
       body = body.find((item) => item.MessageID === identifier);
     }
 

@@ -1,12 +1,9 @@
 import { Injectable, NotFoundException, Scope } from '@nestjs/common';
-
+import { buildSlug, decryptApiKey, PinoLogger } from '@novu/application-generic';
 import { EnvironmentEntity, EnvironmentRepository } from '@novu/dal';
-import { decryptApiKey, PinoLogger } from '@novu/application-generic';
-import { ShortIsPrefixEnum, EnvironmentEnum } from '@novu/shared';
-
-import { GetMyEnvironmentsCommand } from './get-my-environments.command';
+import { EnvironmentEnum, ShortIsPrefixEnum } from '@novu/shared';
 import { EnvironmentResponseDto } from '../../dtos/environment-response.dto';
-import { buildSlug } from '../../../shared/helpers/build-slug';
+import { GetMyEnvironmentsCommand } from './get-my-environments.command';
 
 @Injectable({
   scope: Scope.REQUEST,
@@ -24,8 +21,9 @@ export class GetMyEnvironments {
 
     const environments = await this.environmentRepository.findOrganizationEnvironments(command.organizationId);
 
-    if (!environments?.length)
+    if (!environments?.length) {
       throw new NotFoundException(`No environments were found for organization ${command.organizationId}`);
+    }
 
     return environments.map((environment) => {
       const processedEnvironment = { ...environment };

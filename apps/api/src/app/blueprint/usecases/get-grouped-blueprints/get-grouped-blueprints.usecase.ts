@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { NotificationTemplateEntity, NotificationTemplateRepository } from '@novu/dal';
 import { buildGroupedBlueprintsKey, CachedResponse, PinoLogger } from '@novu/application-generic';
+import { NotificationTemplateEntity, NotificationTemplateRepository } from '@novu/dal';
 import { IGroupedBlueprint } from '@novu/shared';
 
 import { GroupedBlueprintResponse } from '../../dtos/grouped-blueprint.response.dto';
@@ -17,10 +17,6 @@ export class GetGroupedBlueprints {
     this.logger.setContext(this.constructor.name);
   }
 
-  @CachedResponse({
-    builder: (command: GetGroupedBlueprintsCommand) => buildGroupedBlueprintsKey(command.environmentId),
-    options: { ttl: WEEK_IN_SECONDS },
-  })
   async execute(command: GetGroupedBlueprintsCommand): Promise<GroupedBlueprintResponse> {
     const generalGroups = await this.fetchGroupedBlueprints();
 
@@ -46,7 +42,7 @@ export class GetGroupedBlueprints {
   }
 
   private groupedToBlueprintsArray(groups: { name: string; blueprints: NotificationTemplateEntity[] }[]) {
-    return groups.map((group) => group.blueprints).flat();
+    return groups.flatMap((group) => group.blueprints);
   }
 
   private getPopularGroupBlueprints(

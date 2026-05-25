@@ -5,15 +5,19 @@ import {
   AzureSmsHandler,
   BandwidthHandler,
   BrevoSmsHandler,
+  BulkSmsHandler,
   BurstSmsHandler,
   ClickatellHandler,
   ClicksendSmsHandler,
+  CmTelecomHandler,
   EazySmsHandler,
   FiretextSmsHandler,
   FortySixElksHandler,
   GenericSmsHandler,
   GupshupSmsHandler,
+  IMediaHandler,
   InfobipSmsHandler,
+  ISendProSmsHandler,
   ISendSmsHandler,
   KannelSmsHandler,
   MaqsamHandler,
@@ -25,13 +29,16 @@ import {
   RingCentralHandler,
   SendchampSmsHandler,
   SimpletextingSmsHandler,
+  SinchHandler,
   Sms77Handler,
   SmsCentralHandler,
   SnsHandler,
   TelnyxHandler,
   TermiiSmsHandler,
   TwilioHandler,
+  UnifonicHandler,
 } from './handlers';
+import { SmsmodeHandler } from './handlers/smsmode.handler';
 import { ISmsFactory, ISmsHandler } from './interfaces';
 
 export class SmsFactory implements ISmsFactory {
@@ -45,6 +52,7 @@ export class SmsFactory implements ISmsFactory {
     new ClickatellHandler(),
     new GupshupSmsHandler(),
     new FiretextSmsHandler(),
+    new IMediaHandler(),
     new InfobipSmsHandler(),
     new BurstSmsHandler(),
     new FortySixElksHandler(),
@@ -55,6 +63,7 @@ export class SmsFactory implements ISmsFactory {
     new SendchampSmsHandler(),
     new ClicksendSmsHandler(),
     new SimpletextingSmsHandler(),
+    new SinchHandler(),
     new BandwidthHandler(),
     new GenericSmsHandler(),
     new MessageBirdHandler(),
@@ -67,9 +76,14 @@ export class SmsFactory implements ISmsFactory {
     new EazySmsHandler(),
     new MobishastraHandler(),
     new AfroSmsHandler(),
+    new UnifonicHandler(),
+    new SmsmodeHandler(),
+    new BulkSmsHandler(),
+    new ISendProSmsHandler(),
+    new CmTelecomHandler(),
   ];
 
-  getHandler(integration: IntegrationEntity) {
+  getHandler(integration: Pick<IntegrationEntity, 'credentials' | 'channel' | 'providerId' | 'configurations'>) {
     const handler =
       this.handlers.find((handlerItem) => handlerItem.canHandle(integration.providerId, integration.channel)) ?? null;
 

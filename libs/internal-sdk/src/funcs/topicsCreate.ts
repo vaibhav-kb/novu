@@ -3,7 +3,8 @@
  */
 
 import { NovuCore } from "../core.js";
-import { encodeJSON, encodeSimple } from "../lib/encodings.js";
+import { encodeFormQuery, encodeJSON, encodeSimple } from "../lib/encodings.js";
+import { matchStatusCode } from "../lib/http.js";
 import * as M from "../lib/matchers.js";
 import { compactMap } from "../lib/primitives.js";
 import { safeParse } from "../lib/schemas.js";
@@ -30,16 +31,20 @@ import { Result } from "../types/fp.js";
  * Create a topic
  *
  * @remarks
- * Creates a new topic if it does not exist, or updates an existing topic if it already exists
+ * Creates a new topic if it does not exist, or updates an existing topic if it already exists. Use ?failIfExists=true to prevent updates.
+ *
+ * This operation requires either {@link Security.bearerAuth} or {@link Security.secretKey} to be set on the `security` parameter when initializing the SDK.
  */
 export function topicsCreate(
   client: NovuCore,
   createUpdateTopicRequestDto: components.CreateUpdateTopicRequestDto,
+  failIfExists?: boolean | undefined,
   idempotencyKey?: string | undefined,
   options?: RequestOptions,
 ): APIPromise<
   Result<
     operations.TopicsControllerUpsertTopicResponse,
+    | errors.TopicResponseDto
     | errors.ErrorDto
     | errors.ValidationErrorDto
     | NovuError
@@ -55,6 +60,7 @@ export function topicsCreate(
   return new APIPromise($do(
     client,
     createUpdateTopicRequestDto,
+    failIfExists,
     idempotencyKey,
     options,
   ));
@@ -63,12 +69,14 @@ export function topicsCreate(
 async function $do(
   client: NovuCore,
   createUpdateTopicRequestDto: components.CreateUpdateTopicRequestDto,
+  failIfExists?: boolean | undefined,
   idempotencyKey?: string | undefined,
   options?: RequestOptions,
 ): Promise<
   [
     Result<
       operations.TopicsControllerUpsertTopicResponse,
+      | errors.TopicResponseDto
       | errors.ErrorDto
       | errors.ValidationErrorDto
       | NovuError
@@ -85,6 +93,7 @@ async function $do(
 > {
   const input: operations.TopicsControllerUpsertTopicRequest = {
     createUpdateTopicRequestDto: createUpdateTopicRequestDto,
+    failIfExists: failIfExists,
     idempotencyKey: idempotencyKey,
   };
 
@@ -104,6 +113,10 @@ async function $do(
 
   const path = pathToFunc("/v2/topics")();
 
+  const query = encodeFormQuery({
+    "failIfExists": payload.failIfExists,
+  });
+
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -115,13 +128,13 @@ async function $do(
   }));
 
   const securityInput = await extractSecurity(client._options.security);
-  const requestSecurity = resolveGlobalSecurity(securityInput);
+  const requestSecurity = resolveGlobalSecurity(securityInput, [1, 0]);
 
   const context = {
     options: client._options,
     baseURL: options?.serverURL ?? client._baseURL ?? "",
     operationID: "TopicsController_upsertTopic",
-    oAuth2Scopes: [],
+    oAuth2Scopes: null,
 
     resolvedSecurity: requestSecurity,
 
@@ -148,6 +161,7 @@ async function $do(
     baseURL: options?.serverURL,
     path: path,
     headers: headers,
+    query: query,
     body: body,
     userAgent: client._options.userAgent,
     timeoutMs: options?.timeoutMs || client._options.timeoutMs || -1,
@@ -159,23 +173,8 @@ async function $do(
 
   const doResult = await client._do(req, {
     context,
-    errorCodes: [
-      "400",
-      "401",
-      "403",
-      "404",
-      "405",
-      "409",
-      "413",
-      "414",
-      "415",
-      "422",
-      "429",
-      "4XX",
-      "500",
-      "503",
-      "5XX",
-    ],
+    isErrorStatusCode: (statusCode: number) =>
+      matchStatusCode({ status: statusCode } as Response, ["4XX", "5XX"]),
     retryConfig: context.retryConfig,
     retryCodes: context.retryCodes,
   });
@@ -190,6 +189,7 @@ async function $do(
 
   const [result] = await M.match<
     operations.TopicsControllerUpsertTopicResponse,
+    | errors.TopicResponseDto
     | errors.ErrorDto
     | errors.ValidationErrorDto
     | NovuError
@@ -206,9 +206,10 @@ async function $do(
       operations.TopicsControllerUpsertTopicResponse$inboundSchema,
       { hdrs: true, key: "Result" },
     ),
+    M.jsonErr(409, errors.TopicResponseDto$inboundSchema, { hdrs: true }),
     M.jsonErr(414, errors.ErrorDto$inboundSchema),
     M.jsonErr(
-      [400, 401, 403, 404, 405, 409, 413, 415],
+      [400, 401, 403, 404, 405, 413, 415],
       errors.ErrorDto$inboundSchema,
       { hdrs: true },
     ),

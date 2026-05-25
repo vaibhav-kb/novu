@@ -15,14 +15,15 @@ export class SubscriberRepository extends BaseRepository<SubscriberDBModel, Subs
   async findBySubscriberId(
     environmentId: string,
     subscriberId: string,
-    secondaryRead = false
+    secondaryRead = false,
+    select?: string
   ): Promise<SubscriberEntity | null> {
     return await this.findOne(
       {
         _environmentId: environmentId,
         subscriberId,
       },
-      undefined,
+      select,
       { readPreference: secondaryRead ? 'secondaryPreferred' : 'primary' }
     );
   }
@@ -33,18 +34,23 @@ export class SubscriberRepository extends BaseRepository<SubscriberDBModel, Subs
     organizationId: OrganizationId
   ): Promise<BulkCreateSubscriberEntity> {
     const bulkWriteOps = subscribers.map((subscriber) => {
-      const { subscriberId, ...rest } = subscriber;
+      const updatableFields = pickUpdatableSubscriberFields(subscriber);
 
       return {
         updateOne: {
-          filter: { subscriberId, _environmentId: environmentId, _organizationId: organizationId },
-          update: { $set: { ...rest, deleted: false } },
+          filter: {
+            subscriberId: subscriber.subscriberId,
+            _environmentId: environmentId,
+            _organizationId: organizationId,
+          },
+          update: { $set: { ...updatableFields, deleted: false } },
           upsert: true,
         },
       };
     });
 
     let bulkResponse;
+    let writeErrors: Array<{ err: { index: number; errmsg: string; op?: { subscriberId?: string } } }> = [];
     try {
       bulkResponse = await this.bulkWrite(bulkWriteOps);
     } catch (e: unknown) {
@@ -53,12 +59,19 @@ export class SubscriberRepository extends BaseRepository<SubscriberDBModel, Subs
           throw new DalException(e.message);
         }
         bulkResponse = e.result;
+        writeErrors = e.writeErrors as Array<{
+          err: { index: number; errmsg: string; op?: { subscriberId?: string } };
+        }>;
       } else {
         throw new DalException('An unknown error occurred');
       }
     }
-    const created = bulkResponse.getUpsertedIds();
-    const writeErrors = bulkResponse.getWriteErrors();
+
+    const upsertedIds = bulkResponse.upsertedIds || {};
+    const created = Object.entries(upsertedIds).map(([index, _id]) => ({
+      index: parseInt(index, 10),
+      _id,
+    }));
 
     const indexes: number[] = [];
 
@@ -68,7 +81,7 @@ export class SubscriberRepository extends BaseRepository<SubscriberDBModel, Subs
       return mapToSubscriberObject(subscribers[inserted.index]?.subscriberId);
     });
 
-    let failed = [];
+    let failed: Array<{ message: string; subscriberId?: string }> = [];
     if (writeErrors.length > 0) {
       failed = writeErrors.map((error) => {
         indexes.push(error.err.index);
@@ -173,7 +186,13 @@ export class SubscriberRepository extends BaseRepository<SubscriberDBModel, Subs
     subscriberId?: string;
     name?: string;
     includeCursor?: boolean;
-  }): Promise<{ subscribers: SubscriberEntity[]; next: string | null; previous: string | null }> {
+  }): Promise<{
+    subscribers: SubscriberEntity[];
+    next: string | null;
+    previous: string | null;
+    totalCount: number;
+    totalCountCapped: boolean;
+  }> {
     if (query.before && query.after) {
       throw new DalException('Cannot specify both "before" and "after" cursors at the same time.');
     }
@@ -191,6 +210,8 @@ export class SubscriberRepository extends BaseRepository<SubscriberDBModel, Subs
           subscribers: [],
           next: null,
           previous: null,
+          totalCount: 0,
+          totalCountCapped: false,
         };
       }
     }
@@ -226,10 +247,7 @@ export class SubscriberRepository extends BaseRepository<SubscriberDBModel, Subs
               },
             }),
             ...(query.subscriberId && {
-              subscriberId: {
-                $regex: regExpEscape(query.subscriberId),
-                $options: 'i',
-              },
+              subscriberId: query.subscriberId,
             }),
             ...(query.name && {
               $expr: {
@@ -255,12 +273,37 @@ export class SubscriberRepository extends BaseRepository<SubscriberDBModel, Subs
       subscribers: pagination.data,
       next: pagination.next,
       previous: pagination.previous,
+      totalCount: pagination.totalCount,
+      totalCountCapped: pagination.totalCountCapped,
     };
   }
 }
 
 function mapToSubscriberObject(subscriberId: string) {
   return { subscriberId };
+}
+
+const UPDATABLE_SUBSCRIBER_FIELDS: readonly (keyof ISubscribersDefine)[] = [
+  'firstName',
+  'lastName',
+  'email',
+  'phone',
+  'avatar',
+  'locale',
+  'data',
+  'channels',
+  'timezone',
+];
+
+function pickUpdatableSubscriberFields(subscriber: ISubscribersDefine): Partial<ISubscribersDefine> {
+  const result: Partial<ISubscribersDefine> = {};
+  for (const field of UPDATABLE_SUBSCRIBER_FIELDS) {
+    if (field in subscriber) {
+      (result as Record<string, unknown>)[field] = subscriber[field];
+    }
+  }
+
+  return result;
 }
 
 function regExpEscape(literalString: string): string {

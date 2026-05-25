@@ -1,16 +1,18 @@
-import { FilterQuery } from 'mongoose';
+import { ClientSession, FilterQuery } from 'mongoose';
 import { SoftDeleteModel } from 'mongoose-delete';
-import { DalException } from '../../shared';
 import type { EnforceEnvOrOrgIds } from '../../types/enforce';
 import { BaseRepository } from '../base-repository';
 import { MessageTemplateDBModel, MessageTemplateEntity } from './message-template.entity';
 import { MessageTemplate } from './message-template.schema';
 
 type MessageTemplateQuery = FilterQuery<MessageTemplateDBModel>;
-// eslint-disable-next-line @typescript-eslint/naming-convention
 export interface DeleteMsgByIdQuery {
   _id: string;
   _environmentId: string;
+}
+
+export interface RepositoryOptions {
+  session?: ClientSession | null;
 }
 export class MessageTemplateRepository extends BaseRepository<
   MessageTemplateDBModel,
@@ -48,11 +50,19 @@ export class MessageTemplateRepository extends BaseRepository<
     });
   }
 
-  async deleteById(query: DeleteMsgByIdQuery) {
-    return await this.messageTemplate.delete({
+  async deleteById(query: DeleteMsgByIdQuery, options: RepositoryOptions = {}) {
+    const { session } = options;
+
+    const deleteQuery = this.messageTemplate.delete({
       _id: query._id,
       _environmentId: query._environmentId,
     });
+
+    if (session) {
+      deleteQuery.session(session);
+    }
+
+    return await deleteQuery;
   }
 
   async findDeleted(query: MessageTemplateQuery): Promise<MessageTemplateEntity> {

@@ -1,7 +1,6 @@
-/* eslint-disable global-require */
-import sinon from 'sinon';
-import { expect } from 'chai';
 import { ApiServiceLevelEnum, StripeBillingIntervalEnum } from '@novu/shared';
+import { expect } from 'chai';
+import sinon from 'sinon';
 
 const mockCheckoutSessionCompletedEvent = {
   type: 'checkout.session.completed',
@@ -11,7 +10,7 @@ const mockCheckoutSessionCompletedEvent = {
       object: 'checkout.session',
       amount_subtotal: 270000,
       amount_total: 270000,
-      billing_address_collection: 'auto',
+      billing_address_collection: 'required',
       cancel_url: 'http://localhost:4200/manage-account/billing?result=canceled',
       created: 1728552369,
       currency: 'usd',

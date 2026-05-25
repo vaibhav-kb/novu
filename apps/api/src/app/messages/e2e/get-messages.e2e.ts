@@ -1,11 +1,12 @@
 import { Novu } from '@novu/api';
 import { ChannelTypeEnum } from '@novu/api/models/components';
 import { NotificationTemplateEntity, SubscriberEntity } from '@novu/dal';
+import { CreateWorkflowDto, StepTypeEnum, WorkflowCreationSourceEnum, WorkflowResponseDto } from '@novu/shared';
 import { SubscribersService, UserSession } from '@novu/testing';
 import { expect } from 'chai';
 import { initNovuClassSdk } from '../../shared/helpers/e2e/sdk/e2e-sdk.helper';
 
-describe('Get Message - /messages (GET) #novu-v2', function () {
+describe('Get Message - /messages (GET) #novu-v2', () => {
   let session: UserSession;
   let template: NotificationTemplateEntity;
   let subscriber: SubscriberEntity;
@@ -22,7 +23,7 @@ describe('Get Message - /messages (GET) #novu-v2', function () {
     novuClient = initNovuClassSdk(session);
   });
 
-  it('should fetch existing messages', async function () {
+  it('should fetch existing messages', async () => {
     const subscriber2 = await subscriberService.createSubscriber();
 
     await novuClient.trigger({
@@ -50,7 +51,7 @@ describe('Get Message - /messages (GET) #novu-v2', function () {
     expect(response.result.data.length).to.be.equal(2);
   });
 
-  it('should fetch messages using transactionId filter', async function () {
+  it('should fetch messages using transactionId filter', async () => {
     const subscriber3 = await subscriberService.createSubscriber();
 
     const transactionId1 = '1566f9d0-6037-48c1-b356-42667921cadd';
@@ -75,6 +76,64 @@ describe('Get Message - /messages (GET) #novu-v2', function () {
 
     response = await novuClient.messages.retrieve({ transactionId: [transactionId2] });
     expect(response.result.data.length).to.be.equal(2);
+  });
+
+  it('should fetch messages using contextKeys filter', async () => {
+    const subscriber4 = await subscriberService.createSubscriber();
+
+    const workflowBody: CreateWorkflowDto = {
+      name: 'Test Context Workflow',
+      workflowId: 'test-context-workflow-messages',
+      __source: WorkflowCreationSourceEnum.DASHBOARD,
+      steps: [
+        {
+          type: StepTypeEnum.IN_APP,
+          name: 'Test Step',
+          controlValues: {
+            subject: 'Test Subject',
+            body: 'Test Body',
+          },
+        },
+      ],
+    };
+
+    const workflowResponse = await session.testAgent.post('/v2/workflows').send(workflowBody);
+    expect(workflowResponse.status).to.equal(201);
+    const workflow: WorkflowResponseDto = workflowResponse.body.data;
+
+    await novuClient.trigger({
+      workflowId: workflow.workflowId,
+      to: subscriber4.subscriberId,
+      payload: {},
+      context: { teamId: 'team-alpha' },
+    });
+
+    await novuClient.trigger({
+      workflowId: workflow.workflowId,
+      to: subscriber4.subscriberId,
+      payload: {},
+      context: { teamId: 'team-beta' },
+    });
+
+    await session.waitForWorkflowQueueCompletion();
+    await session.waitForSubscriberQueueCompletion();
+    await session.waitForStandardQueueCompletion();
+    await session.waitForJobCompletion(workflow._id);
+
+    let response = await novuClient.messages.retrieve({ subscriberId: subscriber4.subscriberId });
+    expect(response.result.data.length).to.be.equal(2);
+
+    response = await novuClient.messages.retrieve({
+      subscriberId: subscriber4.subscriberId,
+      contextKeys: ['teamId:team-alpha'],
+    });
+    expect(response.result.data.length).to.be.equal(1);
+
+    response = await novuClient.messages.retrieve({
+      subscriberId: subscriber4.subscriberId,
+      contextKeys: ['teamId:team-beta'],
+    });
+    expect(response.result.data.length).to.be.equal(1);
   });
 
   async function triggerEventWithTransactionId(

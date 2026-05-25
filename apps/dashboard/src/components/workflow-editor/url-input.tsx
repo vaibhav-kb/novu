@@ -1,9 +1,9 @@
+import { RedirectTargetEnum } from '@novu/shared';
 import { useFormContext } from 'react-hook-form';
-
-import { ControlInput } from '@/components/primitives/control-input';
 import { FormControl, FormField, FormItem, FormMessage } from '@/components/primitives/form/form';
 import { InputProps, InputRoot } from '@/components/primitives/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/primitives/select';
+import { ControlInput } from '@/components/workflow-editor/control-input';
 import { useSaveForm } from '@/components/workflow-editor/steps/save-form-context';
 import { IsAllowedVariable, LiquidVariable } from '@/utils/parseStepVariables';
 
@@ -44,7 +44,7 @@ export const URLInput = ({
                     multiline={false}
                     indentWithTab={false}
                     placeholder={placeholder}
-                    value={field.value}
+                    value={field.value ?? ''}
                     onChange={field.onChange}
                     variables={variables}
                     isAllowedVariable={isAllowedVariable}
@@ -56,16 +56,16 @@ export const URLInput = ({
               control={control}
               name={targetKey}
               render={({ field }) => (
-                <FormItem>
+                <FormItem className="space-y-0">
                   <FormControl>
                     <Select
-                      value={field.value}
+                      value={field.value ?? RedirectTargetEnum.SELF}
                       onValueChange={(value) => {
                         field.onChange(value);
                         saveForm();
                       }}
                     >
-                      <SelectTrigger className="border-1 h-[36px] max-w-24 rounded-l-none border-l-0 text-xs focus:ring-0">
+                      <SelectTrigger className="border h-[36px] max-w-24 rounded-l-none border-l-0 text-xs focus:ring-0">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>

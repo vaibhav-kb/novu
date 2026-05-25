@@ -1,8 +1,6 @@
 import { forwardRef, Inject, Injectable } from '@nestjs/common';
-import axios from 'axios';
 import {
   EnvironmentRepository,
-  ExecutionDetailsRepository,
   JobEntity,
   JobRepository,
   MessageRepository,
@@ -11,12 +9,11 @@ import {
   SubscriberRepository,
 } from '@novu/dal';
 import {
-  ChannelTypeEnum,
   ExecutionDetailsSourceEnum,
   ExecutionDetailsStatusEnum,
+  FILTER_TO_LABEL,
   FieldLogicalOperatorEnum,
   FieldOperatorEnum,
-  FILTER_TO_LABEL,
   FilterParts,
   FilterPartTypeEnum,
   ICondition,
@@ -28,13 +25,20 @@ import {
   TimeOperatorEnum,
 } from '@novu/shared';
 import { differenceInDays, differenceInHours, differenceInMinutes, parseISO } from 'date-fns';
-import { EmailEventStatusEnum } from '@novu/stateless';
-import { createHash, Filter, FilterProcessingDetails, IFilterVariables, PlatformException } from '../../utils';
-import { ConditionsFilterCommand } from './conditions-filter.command';
-import { buildSubscriberKey, CachedResponse } from '../../services';
+import { decryptApiKey } from '../../encryption';
+import { buildSubscriberKey, CachedResponse, safeOutboundJsonRequest } from '../../services';
+import {
+  assertSafeOutboundUrl,
+  createHash,
+  Filter,
+  FilterProcessingDetails,
+  IFilterVariables,
+  PlatformException,
+  SsrfBlockedError,
+} from '../../utils';
 import { CompileTemplate } from '../compile-template';
 import { CreateExecutionDetails, CreateExecutionDetailsCommand, DetailEnum } from '../create-execution-details';
-import { decryptApiKey } from '../../encryption';
+import { ConditionsFilterCommand } from './conditions-filter.command';
 
 export interface IConditionsFilterResponse {
   passed: boolean;
@@ -47,7 +51,6 @@ export class ConditionsFilter extends Filter {
   constructor(
     private subscriberRepository: SubscriberRepository,
     private messageRepository: MessageRepository,
-    private executionDetailsRepository: ExecutionDetailsRepository,
     private jobRepository: JobRepository,
     private environmentRepository: EnvironmentRepository,
     @Inject(forwardRef(() => CreateExecutionDetails))
@@ -109,7 +112,6 @@ export class ConditionsFilter extends Filter {
   }
 
   private extractFilters(command: ConditionsFilterCommand) {
-    // eslint-disable-next-line no-nested-ternary
     return command.filters?.length ? command.filters : command.step?.filters?.length ? command.step.filters : [];
   }
 
@@ -162,30 +164,6 @@ export class ConditionsFilter extends Filter {
     const field = filter.stepType;
     const expected = 'true';
     const operator = FieldOperatorEnum.EQUAL;
-
-    if (message?.channel === ChannelTypeEnum.EMAIL) {
-      const count = await this.executionDetailsRepository.count({
-        _jobId: command.job._parentId,
-        _messageId: message._id,
-        _environmentId: command.environmentId,
-        webhookStatus: EmailEventStatusEnum.OPENED,
-      });
-
-      const passed = [PreviousStepTypeEnum.UNREAD, PreviousStepTypeEnum.UNSEEN].includes(filter.stepType)
-        ? count === 0
-        : count > 0;
-
-      filterProcessingDetails.addCondition({
-        filter: label,
-        field,
-        expected,
-        actual: `${passed}`,
-        operator,
-        passed,
-      });
-
-      return passed;
-    }
 
     const value = [PreviousStepTypeEnum.SEEN, PreviousStepTypeEnum.UNSEEN].includes(filter.stepType)
       ? message.seen
@@ -274,30 +252,43 @@ export class ConditionsFilter extends Filter {
 
     const payload = await this.buildPayload(variables, command);
 
-    const hmac = await this.buildHmac(command);
+    // Validate the URL syntax before any HMAC is built; the connect-time guard
+    // and redirect re-validation happen inside safeOutboundJsonRequest.
+    try {
+      assertSafeOutboundUrl(child.webhookUrl);
+    } catch (err) {
+      if (err instanceof SsrfBlockedError) {
+        throw new Error(JSON.stringify({ message: err.message, data: 'Webhook URL blocked by SSRF protection.' }));
+      }
+      throw err;
+    }
 
-    const config = {
-      headers: {
-        'nv-hmac-256': hmac,
-      },
-    };
+    const hmac = await this.buildHmac(command);
+    const headers: Record<string, string> = {};
+    if (hmac) {
+      headers['nv-hmac-256'] = hmac;
+    }
 
     try {
-      return await axios.post(child.webhookUrl, payload, config).then((response) => {
-        return response.data as Record<string, unknown>;
+      const response = await safeOutboundJsonRequest<Record<string, unknown>>({
+        url: child.webhookUrl,
+        method: 'POST',
+        headers,
+        body: payload,
       });
-    } catch (err: any) {
-      throw new Error(
-        JSON.stringify({
-          message: err.message,
-          data: 'Exception while performing webhook request.',
-        })
-      );
+
+      return response.body;
+    } catch (err) {
+      if (err instanceof SsrfBlockedError) {
+        throw new Error(JSON.stringify({ message: err.message, data: 'Webhook URL blocked by SSRF protection.' }));
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(JSON.stringify({ message, data: 'Exception while performing webhook request.' }));
     }
   }
 
-  private async buildHmac(command: ConditionsFilterCommand): Promise<string> {
-    if (process.env.NODE_ENV === 'test') return '';
+  private async buildHmac(command: ConditionsFilterCommand): Promise<string | null> {
+    if (process.env.NODE_ENV === 'test') return null;
 
     const environment = await this.environmentRepository.findOne({
       _id: command.environmentId,
@@ -305,7 +296,14 @@ export class ConditionsFilter extends Filter {
     });
     if (!environment) throw new PlatformException('Environment is not found');
 
-    return createHash(decryptApiKey(environment.apiKeys[0].key), command.environmentId);
+    const apiKey = environment.apiKeys[0]?.key;
+    const decryptedKey = apiKey ? decryptApiKey(apiKey) : null;
+
+    if (!decryptedKey || !command.environmentId) {
+      return null;
+    }
+
+    return createHash(decryptedKey, command.environmentId);
   }
 
   private async buildPayload(variables: IFilterVariables, command: ConditionsFilterCommand) {
@@ -352,7 +350,6 @@ export class ConditionsFilter extends Filter {
 
     if (child.on === FilterPartTypeEnum.WEBHOOK) {
       if (process.env.NODE_ENV === 'test') return true;
-      // eslint-disable-next-line no-param-reassign
       child.value = await this.compileFilter(child.value, variables, command.job);
       const res = await this.getWebhookResponse(child, variables, command);
       passed = this.processFilterEquality({ payload: undefined, webhook: res }, child, filterProcessingDetails);
@@ -363,7 +360,6 @@ export class ConditionsFilter extends Filter {
       child.on === FilterPartTypeEnum.PAYLOAD ||
       child.on === FilterPartTypeEnum.SUBSCRIBER
     ) {
-      // eslint-disable-next-line no-param-reassign
       child.value = await this.compileFilter(child.value, variables, command.job);
 
       passed = this.processFilterEquality(variables, child, filterProcessingDetails);

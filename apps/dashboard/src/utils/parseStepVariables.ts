@@ -1,14 +1,18 @@
 import { Completion } from '@codemirror/autocomplete';
-
-import { isAllowedAlias } from '@/components/workflow-editor/steps/email/variables/repeat-block-aliases';
-
 import type { JSONSchemaDefinition } from '@novu/shared';
+import { JSONSchema7 } from 'json-schema';
+import { isAllowedAlias } from '@/components/maily/repeat-block-aliases';
+import { SYSTEM_VARIABLE_DEFINITIONS } from '@/components/variables/system-variable-definitions';
 import {
   DIGEST_VARIABLES,
   DIGEST_VARIABLES_ENUM,
   getDynamicDigestVariable,
 } from '../components/variable/utils/digest-variables';
-import { JSONSchema7 } from 'json-schema';
+import { isNamespaceOnlyVariable } from './liquid';
+
+function normalizeArrayNotation(path: string): string {
+  return path.replace(/\[(\d+)\]/g, '.$1');
+}
 
 export interface LiquidVariable {
   type?: 'variable' | 'digest' | 'new-variable' | 'local';
@@ -123,7 +127,7 @@ export function parseStepVariables(
 
             if (value.items) {
               const items = Array.isArray(value.items) ? value.items[0] : value.items;
-              extractProperties(items, `${fullPath}[0]`);
+              extractProperties(items, `${fullPath}.0`);
             }
           } else if (value.type === 'object') {
             result.namespaces.push({ name: fullPath });
@@ -185,6 +189,16 @@ export function parseStepVariables(
   }
 
   function isAllowedVariable(variable: LiquidVariable): boolean {
+    // Check for namespace-only variables (invalid)
+    if (isNamespaceOnlyVariable(variable.name)) {
+      return false;
+    }
+
+    // Built-in env system variables are always valid — injected at runtime, not in schema
+    if (SYSTEM_VARIABLE_DEFINITIONS.some(({ key }) => variable.name === key)) {
+      return true;
+    }
+
     if (isPayloadSchemaEnabled && variable.name.startsWith('payload.')) {
       return true;
     }
@@ -198,8 +212,9 @@ export function parseStepVariables(
 
     const pathWithFilters = variable.aliasFor || variable.name;
     const [path] = pathWithFilters.split('|');
+    const normalizedPath = normalizeArrayNotation(path);
 
-    if (result.primitives.some((primitive) => primitive.name === path)) {
+    if (result.primitives.some((primitive) => normalizeArrayNotation(primitive.name) === normalizedPath)) {
       return true;
     }
 
@@ -208,6 +223,7 @@ export function parseStepVariables(
 
     let currentObj: JSONSchemaDefinition | JSONSchema7 = schema;
 
+    // TODO: replace with AJV
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i];
 
@@ -227,11 +243,27 @@ export function parseStepVariables(
       if (typeof currentObj === 'boolean' || !('type' in currentObj)) return false;
 
       if (currentObj.type === 'object') {
-        if (!currentObj.properties || !(part in currentObj.properties)) {
+        // First check if the property exists in the defined properties
+        if (currentObj.properties && part in currentObj.properties) {
+          currentObj = currentObj.properties[part];
+        }
+        // If not found in properties, check if additionalProperties allows it
+        else if (currentObj.additionalProperties) {
+          if (typeof currentObj.additionalProperties === 'object') {
+            // additionalProperties is a schema object
+            currentObj = currentObj.additionalProperties;
+          } else if (currentObj.additionalProperties === true) {
+            // additionalProperties: true means any property is allowed
+            // Since we don't know the schema of the property, we allow the rest of the path
+            return true;
+          } else {
+            return false;
+          }
+        }
+        // If neither properties nor additionalProperties allow it, it's invalid
+        else {
           return false;
         }
-
-        currentObj = currentObj.properties[part];
       } else {
         return false;
       }

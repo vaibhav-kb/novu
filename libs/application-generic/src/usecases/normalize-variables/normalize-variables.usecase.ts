@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { SubscriberEntity, SubscriberRepository, TenantEntity, TenantRepository } from '@novu/dal';
 import { FilterPartTypeEnum, IMessageFilter } from '@novu/shared';
-import { IFilterVariables } from '../../utils';
 import { buildSubscriberKey, CachedResponse } from '../../services';
+import { IFilterVariables } from '../../utils';
 import { ConditionsFilterCommand } from '../conditions-filter';
 
 /**
@@ -23,7 +23,7 @@ export class NormalizeVariables {
     private tenantRepository: TenantRepository
   ) {}
 
-  public async execute(command: ConditionsFilterCommand) {
+  public async execute(command: ConditionsFilterCommand): Promise<IFilterVariables> {
     const filterVariables: IFilterVariables = {};
 
     const combinedFilters = [command.step, ...(command.step?.variants || [])].flatMap((variant) =>
@@ -38,6 +38,7 @@ export class NormalizeVariables {
 
     filterVariables.step = command.variables?.step ?? undefined;
     filterVariables.actor = command.variables?.actor ?? undefined;
+    filterVariables.context = command.variables?.context ?? undefined;
 
     return filterVariables;
   }

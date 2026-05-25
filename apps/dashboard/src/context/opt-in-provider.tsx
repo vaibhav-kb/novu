@@ -1,12 +1,10 @@
-import { PropsWithChildren, useEffect } from 'react';
 import { NewDashboardOptInStatusEnum } from '@novu/shared';
+import { PropsWithChildren, useEffect } from 'react';
 import { useNewDashboardOptIn } from '@/hooks/use-new-dashboard-opt-in';
-import { useUser } from '@clerk/clerk-react';
 
 export const OptInProvider = (props: PropsWithChildren) => {
   const { children } = props;
   const { status, isLoaded, redirectToLegacyDashboard, updateUserOptInStatus } = useNewDashboardOptIn();
-  const { user } = useUser();
 
   useEffect(() => {
     // set light theme on the new domain for both legacy and new dashboard

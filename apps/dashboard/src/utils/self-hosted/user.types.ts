@@ -2,6 +2,7 @@ import { DecodedJwt } from '.';
 
 export interface SelfHostedUser {
   update: () => Promise<null>;
+  reload: () => Promise<null>;
   externalId?: string;
   firstName?: string;
   lastName?: string;
@@ -13,13 +14,18 @@ export interface SelfHostedUser {
   passwordEnabled: boolean;
 }
 
-export function createUserFromJwt(decodedJwt: DecodedJwt | null): SelfHostedUser {
+export function createUserFromJwt(decodedJwt: DecodedJwt | null): SelfHostedUser | null {
+  if (!decodedJwt) {
+    return null;
+  }
+
   return {
     update: async () => null,
-    externalId: decodedJwt?._id,
-    firstName: decodedJwt?.firstName,
-    lastName: decodedJwt?.lastName,
-    emailAddresses: [{ emailAddress: decodedJwt?.email }],
+    reload: async () => null,
+    externalId: decodedJwt._id,
+    firstName: decodedJwt.firstName,
+    lastName: decodedJwt.lastName,
+    emailAddresses: [{ emailAddress: decodedJwt.email }],
     createdAt: new Date(),
     publicMetadata: { newDashboardOptInStatus: 'opted_in' },
     unsafeMetadata: { newDashboardOptInStatus: 'opted_in' },

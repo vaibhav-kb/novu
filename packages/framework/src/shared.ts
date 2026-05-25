@@ -14,8 +14,6 @@
  *
  */
 
-/* eslint-disable @typescript-eslint/naming-convention */
-
 export interface IResponseError {
   error: string;
   message: string;
@@ -85,6 +83,7 @@ export interface IChannelCredentials {
 export interface ITopic {
   type: 'Topic';
   topicKey: string;
+  exclude?: string[];
 }
 
 export type TriggerRecipientsPayload = string | ISubscriberPayload | ITopic | ISubscriberPayload[] | ITopic[];
@@ -157,6 +156,11 @@ export enum SmsProviderIdEnum {
   EazySms = 'eazy-sms',
   Mobishastra = 'mobishastra',
   AfroSms = 'afro-message',
+  Unifonic = 'unifonic',
+  Smsmode = 'smsmode',
+  IMedia = 'imedia',
+  Sinch = 'sinch',
+  ISendProSms = 'isendpro-sms',
 }
 
 export enum ChatProviderIdEnum {
@@ -170,6 +174,7 @@ export enum ChatProviderIdEnum {
   GetStream = 'getstream',
   RocketChat = 'rocket-chat',
   WhatsAppBusiness = 'whatsapp-business',
+  ChatWebhook = 'chat-webhook',
 }
 
 export enum PushProviderIdEnum {
@@ -180,6 +185,7 @@ export enum PushProviderIdEnum {
   Pushpad = 'pushpad',
   PushWebhook = 'push-webhook',
   PusherBeams = 'pusher-beams',
+  AppIO = 'appio',
 }
 
 export enum InAppProviderIdEnum {

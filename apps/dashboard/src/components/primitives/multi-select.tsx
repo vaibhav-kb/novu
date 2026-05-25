@@ -1,12 +1,11 @@
+import { CaretSortIcon } from '@radix-ui/react-icons';
 import { useMemo, useState } from 'react';
 import { RiCheckLine } from 'react-icons/ri';
-import { CaretSortIcon } from '@radix-ui/react-icons';
-
-import { cn } from '@/utils/ui';
-import TruncatedText from '@/components/truncated-text';
-import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/primitives/popover';
 import { Command, CommandGroup, CommandItem, CommandList } from '@/components/primitives/command';
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/primitives/popover';
 import { selectTriggerVariants } from '@/components/primitives/select';
+import TruncatedText from '@/components/truncated-text';
+import { cn } from '@/utils/ui';
 
 export const MultiSelect = <T extends string | number>({
   values,
@@ -72,7 +71,7 @@ export const MultiSelect = <T extends string | number>({
       </PopoverTrigger>
       <PopoverPortal>
         <Command loop className="h-0 w-0">
-          <PopoverContent className="min-w-[8rem] p-0" align="end">
+          <PopoverContent className="min-w-32 p-0" align="end">
             <CommandList>
               <CommandGroup className="max-h-96 overflow-auto">
                 {options.map(({ value, label }) => {

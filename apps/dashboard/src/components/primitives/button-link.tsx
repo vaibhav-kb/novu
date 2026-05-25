@@ -2,11 +2,10 @@
 
 import { Slot, Slottable } from '@radix-ui/react-slot';
 import * as React from 'react';
-
+import { IconType } from 'react-icons';
 import { PolymorphicComponentProps } from '@/utils/polymorphic';
 import { recursiveCloneChildren } from '@/utils/recursive-clone-children';
 import { tv, type VariantProps } from '@/utils/tv';
-import { IconType } from 'react-icons';
 
 const LINK_BUTTON_ROOT_NAME = 'LinkButtonRoot';
 const LINK_BUTTON_ICON_NAME = 'LinkButtonIcon';
@@ -15,13 +14,13 @@ export const linkButtonVariants = tv({
   slots: {
     root: [
       // base
-      'group inline-flex items-center justify-center whitespace-nowrap outline-none',
+      'group inline-flex items-center justify-center whitespace-nowrap outline-hidden',
       'transition duration-200 ease-out',
       'underline decoration-transparent underline-offset-[3px]',
       // hover
       'hover:decoration-current',
       // focus
-      'focus:outline-none focus-visible:underline',
+      'focus:outline-hidden focus-visible:underline',
       // disabled
       'disabled:pointer-events-none disabled:text-text-disabled disabled:no-underline',
     ],

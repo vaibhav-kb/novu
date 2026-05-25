@@ -1,5 +1,5 @@
-import { ChannelTypeEnum } from './channel';
-import { TopicKey } from './topic';
+import type { ChannelTypeEnum } from './channel';
+import type { TopicKey } from './topic';
 
 export enum TriggerEventStatusEnum {
   ERROR = 'error',
@@ -20,23 +20,26 @@ export interface IAttachmentOptions {
   disposition?: string;
 }
 
+export interface IEmailAlternative {
+  contentType: string;
+  content: string | Buffer;
+}
+
 export interface IEmailOptions {
   to: string[];
   subject: string;
   html: string;
   from?: string;
   text?: string;
+  alternatives?: IEmailAlternative[];
   attachments?: IAttachmentOptions[];
   id?: string;
   replyTo?: string;
   cc?: string[];
   bcc?: string[];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   payloadDetails?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   notificationDetails?: any;
   ipPoolName?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   customData?: Record<string, any>;
   headers?: Record<string, string>;
   senderName?: string;
@@ -64,6 +67,7 @@ export enum TriggerRecipientsTypeEnum {
 export interface ITopic {
   type: TriggerRecipientsTypeEnum.TOPIC;
   topicKey: TopicKey;
+  exclude?: string[];
 }
 
 export type TriggerRecipientTopics = ITopic[];

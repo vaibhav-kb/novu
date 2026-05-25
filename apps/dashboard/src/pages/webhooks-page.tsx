@@ -1,26 +1,26 @@
-import { useFeatureFlag } from '@/hooks/use-feature-flag';
 import {
-  FeatureFlagsKeysEnum,
   ApiServiceLevelEnum,
+  FeatureFlagsKeysEnum,
   FeatureNameEnum,
   getFeatureForTierAsBoolean,
   IEnvironment,
 } from '@novu/shared';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives/tabs';
-import { Button } from '@/components/primitives/button';
-import { DashboardLayout } from '../components/dashboard-layout';
-import { Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
-import { ROUTES, buildRoute } from '@/utils/routes';
-import { useQuery, useMutation, useQueryClient, UseQueryResult, UseMutationResult } from '@tanstack/react-query';
-import { useEnvironment } from '@/context/environment/hooks';
-import { getWebhookPortalToken, createWebhookPortalToken } from '@/api/webhooks';
+import { UseMutationResult, UseQueryResult, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { RiLoaderLine } from 'react-icons/ri';
+import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { AppPortal, SvixProvider } from 'svix-react';
-import { RiLoaderLine, RiWebhookLine } from 'react-icons/ri';
-import { useFetchSubscription } from '@/hooks/use-fetch-subscription';
-import { WebhooksPaywallState } from '@/components/webhooks/webhooks-paywall-state';
+import { createWebhookPortalToken, getWebhookPortalToken } from '@/api/webhooks';
+import { Button } from '@/components/primitives/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives/tabs';
+import { EmptyStateSvg, WebhooksPaywallState } from '@/components/webhooks/webhooks-paywall-state';
 import { IS_SELF_HOSTED } from '@/config';
-import { QueryKeys } from '../utils/query-keys';
+import { useEnvironment } from '@/context/environment/hooks';
+import { useFeatureFlag } from '@/hooks/use-feature-flag';
+import { useFetchSubscription } from '@/hooks/use-fetch-subscription';
+import { buildRoute, ROUTES } from '@/utils/routes';
+import { DashboardLayout } from '../components/dashboard-layout';
 import { Badge } from '../components/primitives/badge';
+import { QueryKeys } from '../utils/query-keys';
 
 interface WebhookPortalTokenResponse {
   url: string;
@@ -127,8 +127,8 @@ export function WebhooksPage() {
     return <Navigate to={ROUTES.WORKFLOWS} replace />;
   }
 
-  if (window.location.pathname === ROUTES.WEBHOOKS) {
-    return <Navigate to={activeTabDefinition.routePath} replace />;
+  if (window.location.pathname === ROUTES.WEBHOOKS && environmentSlug) {
+    return <Navigate to={buildRoute(activeTabDefinition.routePath, { environmentSlug })} replace />;
   }
 
   if (!IS_SELF_HOSTED && !isTierEligibleForWebhooks && !isLoadingEligibility) {
@@ -145,23 +145,39 @@ export function WebhooksPage() {
   if (currentEnvironment && !currentEnvironment?.webhookAppId) {
     return (
       <DashboardLayout headerStartItems={<h1 className="text-foreground-950">Webhooks</h1>}>
-        <div className="flex h-full flex-col items-center justify-center gap-4 p-4 text-center">
-          <div className="bg-muted mb-3 flex h-16 w-16 items-center justify-center rounded-full">
-            <RiWebhookLine className="text-muted-foreground h-8 w-8" />
+        <div className="flex h-full w-full flex-col items-center justify-center gap-6 px-4">
+          <div className="flex w-full max-w-[480px] flex-col items-center gap-6 text-center">
+            <div className="flex w-full flex-col gap-3">
+              <div className="flex flex-col items-center gap-2">
+                <div className="mb-[50px]">
+                  <EmptyStateSvg />
+                </div>
+                <h2 className="text-foreground-900 text-label-md">Enable Webhooks for This Environment</h2>
+                <p className="text-text-soft text-label-xs mb-3 max-w-[300px]">
+                  Once enabled, you'll be able to configure webhook endpoints, monitor events, and view delivery logs
+                  for this environment.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col items-center gap-1">
+              <Button
+                onClick={handleEnableWebhooks}
+                isLoading={isEnablingWebhooks}
+                variant="primary"
+                mode="gradient"
+                size="xs"
+                className="mb-3.5"
+              >
+                Enable Webhooks
+              </Button>
+              {mutationError && (
+                <p className="text-label-xs text-red-500">
+                  Error enabling webhooks: {mutationError.message || 'An unknown error occurred.'}
+                </p>
+              )}
+            </div>
           </div>
-          <h2 className="text-foreground-900 text-xl font-semibold">Enable Webhooks for This Environment</h2>
-          <p className="text-muted-foreground max-w-md text-sm">
-            Once enabled, you'll be able to configure webhook endpoints, monitor events, and view delivery logs for this
-            environment.
-          </p>
-          <Button onClick={handleEnableWebhooks} isLoading={isEnablingWebhooks} className="mt-2">
-            {'Enable Webhooks'}
-          </Button>
-          {mutationError && (
-            <p className="mt-2 text-sm text-red-500">
-              Error enabling webhooks: {mutationError.message || 'An unknown error occurred.'}
-            </p>
-          )}
         </div>
       </DashboardLayout>
     );
@@ -183,16 +199,7 @@ export function WebhooksPage() {
   };
 
   return (
-    <DashboardLayout
-      headerStartItems={
-        <h1 className="text-foreground-950">
-          Webhooks{' '}
-          <Badge color="gray" size="sm">
-            BETA
-          </Badge>
-        </h1>
-      }
-    >
+    <DashboardLayout headerStartItems={<h1 className="text-foreground-950">Webhooks</h1>}>
       <Tabs
         value={activeTabDefinition.value}
         onValueChange={(value) => {
@@ -204,7 +211,7 @@ export function WebhooksPage() {
         }}
       >
         <div className="border-neutral-alpha-200 flex items-center justify-between border-b">
-          <TabsList variant="regular" className="border-b-0 border-t-2 border-transparent p-0 !px-2">
+          <TabsList variant="regular" className="border-b-0 border-t-2 border-transparent p-0 px-2!">
             {tabDefinitions.map((tab) => (
               <TabsTrigger key={tab.value} value={tab.value} variant="regular" size="xl">
                 {tab.label}
@@ -216,7 +223,7 @@ export function WebhooksPage() {
         {canDisplayPortal && portalToken && appId ? (
           <SvixProvider token={portalToken} appId={appId}>
             {tabDefinitions.map((tab) => (
-              <TabsContent key={tab.value} value={tab.value} className="!mt-0 overflow-hidden p-2.5">
+              <TabsContent key={tab.value} value={tab.value} className="mt-0! overflow-hidden p-2.5">
                 {activeTabDefinition.value === tab.value && (
                   <div className="mt-[-61px]">
                     <AppPortal url={buildPortalUrl(portalUrl || null, activeTabDefinition.portalPath)} fullSize />
@@ -228,7 +235,7 @@ export function WebhooksPage() {
         ) : (
           <>
             {tabDefinitions.map((tab) => (
-              <TabsContent key={tab.value} value={tab.value} className="!mt-0 overflow-hidden p-2.5">
+              <TabsContent key={tab.value} value={tab.value} className="mt-0! overflow-hidden p-2.5">
                 {activeTabDefinition.value === tab.value && (
                   <div className="flex h-full min-h-[calc(100vh-250px)] items-center justify-center p-4 text-center">
                     {isInitialLoading ? (

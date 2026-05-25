@@ -1,10 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   AnalyticsService,
-  InvalidateCacheService,
-  WebSocketsQueueService,
   buildFeedKey,
   buildMessageCountKey,
+  InvalidateCacheService,
+  WebSocketsQueueService,
 } from '@novu/application-generic';
 import { DalException, MessageRepository, SubscriberEntity, SubscriberRepository } from '@novu/dal';
 import { WebSocketEventEnum } from '@novu/shared';
@@ -23,13 +23,6 @@ export class RemoveMessage {
   ) {}
 
   async execute(command: RemoveMessageCommand): Promise<void> {
-    await this.invalidateCache.invalidateQuery({
-      key: buildFeedKey().invalidate({
-        subscriberId: command.subscriberId,
-        _environmentId: command.environmentId,
-      }),
-    });
-
     await this.invalidateCache.invalidateQuery({
       key: buildMessageCountKey().invalidate({
         subscriberId: command.subscriberId,
@@ -81,6 +74,7 @@ export class RemoveMessage {
         event: eventMessage,
         userId: subscriber._id,
         _environmentId: subscriber._environmentId,
+        contextKeys: [],
       },
       groupId: subscriber._organizationId,
     });

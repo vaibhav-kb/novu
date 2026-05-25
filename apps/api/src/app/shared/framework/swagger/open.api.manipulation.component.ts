@@ -1,7 +1,7 @@
-import Nimma from 'nimma';
 import { OpenAPIObject } from '@nestjs/swagger';
-import { API_KEY_SWAGGER_SECURITY_NAME } from '@novu/application-generic';
 import { OperationObject, PathItemObject, PathsObject } from '@nestjs/swagger/dist/interfaces/open-api-spec.interface';
+import { API_KEY_SWAGGER_SECURITY_NAME } from '@novu/application-generic';
+import Nimma from 'nimma';
 
 const jpath = '$.paths..responses["200","201"].content["application/json"]';
 
@@ -32,7 +32,6 @@ function liftDataProperty(scope) {
     return;
   }
 
-  // eslint-disable-next-line no-param-reassign
   scope.value.schema = data;
 }
 
@@ -43,10 +42,8 @@ export function removeEndpointsWithoutApiKey<T>(openApiDocument: T): T {
     throw new Error('Invalid OpenAPI document');
   }
 
-  // eslint-disable-next-line guard-for-in
   for (const path in parsedDocument.paths) {
     const operations = parsedDocument.paths[path];
-    // eslint-disable-next-line guard-for-in
     for (const method in operations) {
       const operation = operations[method];
       if (operation.security) {
@@ -91,7 +88,7 @@ export function overloadDocumentForSdkGeneration(inputDocument: OpenAPIObject, i
   return addIdempotencyKeyHeader(openAPIObject) as OpenAPIObject;
 }
 
-export function addIdempotencyKeyHeader<T>(openApiDocument: T): T {
+function addIdempotencyKeyHeader<T>(openApiDocument: T): T {
   const parsedDocument = JSON.parse(JSON.stringify(openApiDocument));
 
   if (!parsedDocument.paths) {
@@ -164,37 +161,12 @@ export function sortOpenAPIDocument(openApiDoc: OpenAPIObject): OpenAPIObject {
       return a.localeCompare(b);
     });
 
-    // Debugging function to extract operation details
-    const extractOperationDetails = (method: string, url: string, operation?: OperationObject) => {
-      if (!operation) return null;
-
-      return {
-        method: method.toUpperCase(),
-        url,
-        operationId: operation.operationId || 'N/A',
-        tags: operation.tags || [],
-        summary: operation.summary || 'N/A',
-      };
-    };
-
-    // Debugging array to collect all operations
-    const debugOperations: any[] = [];
-
     // Reconstruct paths with sorted keys and sorted methods within each path
     sortedPathKeys.forEach((pathKey) => {
       const pathItem = sortedDoc.paths[pathKey];
 
       // Define method order priority
       const methodPriority = ['post', 'put', 'patch', 'get', 'delete', 'options', 'head', 'trace'];
-
-      // Collect operations for debugging
-      methodPriority.forEach((method) => {
-        const operation = pathItem[method as keyof PathItemObject] as OperationObject | undefined;
-        const operationDetails = extractOperationDetails(method, pathKey, operation);
-        if (operationDetails) {
-          debugOperations.push(operationDetails);
-        }
-      });
 
       // Sort methods within the path item
       sortedPaths[pathKey] = {

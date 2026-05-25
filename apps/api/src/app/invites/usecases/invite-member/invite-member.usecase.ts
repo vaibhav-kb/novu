@@ -1,11 +1,9 @@
-import { Injectable, NotFoundException, Scope, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Scope } from '@nestjs/common';
+import { Novu } from '@novu/api';
+import { AnalyticsService, capitalize, createGuid } from '@novu/application-generic';
 import { IAddMemberData, MemberRepository, OrganizationRepository, UserRepository } from '@novu/dal';
 import { MemberRoleEnum, MemberStatusEnum } from '@novu/shared';
-import { AnalyticsService } from '@novu/application-generic';
-
-import { Novu } from '@novu/api';
 import { InviteMemberCommand } from './invite-member.command';
-import { capitalize, createGuid } from '../../../shared/services/helper/helper.service';
 
 @Injectable({
   scope: Scope.REQUEST,
@@ -46,7 +44,7 @@ export class InviteMember {
           inviteeName: capitalize(command.email.split('@')[0]),
           organizationName: capitalize(organization.name),
           inviterName: capitalize(inviterUser.firstName ?? ''),
-          acceptInviteUrl: `${process.env.FRONT_BASE_URL}/auth/invitation/${token}`,
+          acceptInviteUrl: `${process.env.DASHBOARD_URL || process.env.FRONT_BASE_URL}/auth/invitation/${token}`,
         },
       });
     }

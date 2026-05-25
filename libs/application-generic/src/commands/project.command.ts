@@ -1,6 +1,5 @@
-import { IsDefined, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
-
 import { DirectionEnum, KeysOfT, UserSessionData } from '@novu/shared';
+import { IsArray, IsDefined, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 
 import { BaseCommand } from './base.command';
 
@@ -81,6 +80,11 @@ export abstract class EnvironmentWithSubscriber extends BaseCommand {
 
   @IsNotEmpty()
   readonly subscriberId: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  readonly contextKeys?: string[];
 }
 
 export abstract class EnvironmentCommand extends BaseCommand {

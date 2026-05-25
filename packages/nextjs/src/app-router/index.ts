@@ -2,7 +2,22 @@
 
 // First export to override anything that we redeclare
 export type * from '@novu/react';
-
+export {
+  Bell,
+  InboxContent,
+  MsTeamsConnectButton,
+  MsTeamsLinkUser,
+  Notifications,
+  NovuProvider,
+  PreferenceLevel,
+  Preferences,
+  SeverityLevelEnum,
+  SlackConnectButton,
+  SlackLinkUser,
+  SubscriptionButton,
+  SubscriptionPreferences,
+  useNovu,
+  WorkflowCriticalityEnum,
+} from '@novu/react';
 export { Inbox } from './Inbox';
-
-export { Bell, Preferences, Notifications, InboxContent, NovuProvider } from '@novu/react';
+export { Subscription } from './Subscription';

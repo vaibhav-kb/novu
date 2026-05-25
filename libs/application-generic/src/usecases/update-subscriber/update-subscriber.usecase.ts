@@ -1,11 +1,10 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { SubscriberEntity, SubscriberRepository } from '@novu/dal';
 
 import { buildSubscriberKey, CachedResponse, InvalidateCacheService } from '../../services';
 import { subscriberNeedUpdate } from '../../utils';
-
-import { UpdateSubscriberCommand } from './update-subscriber.command';
 import { OAuthHandlerEnum, UpdateSubscriberChannel, UpdateSubscriberChannelCommand } from '../subscribers';
+import { UpdateSubscriberCommand } from './update-subscriber.command';
 
 @Injectable()
 export class UpdateSubscriber {
@@ -33,30 +32,31 @@ export class UpdateSubscriber {
       updatePayload.email = command.email;
     }
 
-    if (command.phone != null) {
+    if (command.phone !== undefined) {
       updatePayload.phone = command.phone;
     }
 
-    if (command.firstName != null) {
+    if (command.firstName !== undefined) {
       updatePayload.firstName = command.firstName;
     }
 
-    if (command.lastName != null) {
+    if (command.lastName !== undefined) {
       updatePayload.lastName = command.lastName;
     }
 
-    if (command.avatar != null) {
+    if (command.avatar !== undefined) {
       updatePayload.avatar = command.avatar;
     }
 
-    if (command.locale != null) {
+    if (command.locale !== undefined) {
       updatePayload.locale = command.locale;
     }
-    if (command.timezone != null) {
+
+    if (command.timezone !== undefined) {
       updatePayload.timezone = command.timezone;
     }
 
-    if (command.data != null) {
+    if (command.data !== undefined) {
       updatePayload.data = command.data;
     }
 

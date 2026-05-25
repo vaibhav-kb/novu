@@ -1,6 +1,7 @@
-import { NovuEventEmitter } from '../event-emitter';
-import { InitializeSessionArgs } from './types';
 import type { InboxService } from '../api';
+import { NovuEventEmitter } from '../event-emitter';
+import { isBrowser } from '../utils/is-browser';
+import { InitializeSessionArgs } from './types';
 
 export class Session {
   #emitter: NovuEventEmitter;
@@ -23,6 +24,22 @@ export class Session {
 
   public get subscriberId() {
     return this.#options.subscriber?.subscriberId;
+  }
+
+  public get context() {
+    return this.#options.context;
+  }
+
+  public get subscriberHash() {
+    return this.#options.subscriberHash;
+  }
+
+  public get contextHash() {
+    return this.#options.contextHash;
+  }
+
+  public get subscriber() {
+    return this.#options.subscriber;
   }
 
   private handleApplicationIdentifier(method: 'get' | 'store' | 'delete', identifier?: string): string | null {
@@ -55,11 +72,23 @@ export class Session {
   }
 
   public async initialize(options?: InitializeSessionArgs): Promise<void> {
+    const subscriberUnchanged = this.#options.subscriber?.subscriberId === options?.subscriber?.subscriberId;
+    const contextUnchanged = JSON.stringify(this.#options.context) === JSON.stringify(options?.context);
+
+    if (subscriberUnchanged && contextUnchanged) {
+      return;
+    }
+
     try {
       if (options) {
         this.#options = options;
       }
-      const { subscriber, subscriberHash, applicationIdentifier } = this.#options;
+      const { subscriber, subscriberHash, contextHash, applicationIdentifier, defaultSchedule, context } =
+        this.#options;
+      let currentTimezone: string | undefined;
+      if (isBrowser()) {
+        currentTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      }
 
       let finalApplicationIdentifier = applicationIdentifier;
       if (!finalApplicationIdentifier) {
@@ -75,7 +104,14 @@ export class Session {
       const response = await this.#inboxService.initializeSession({
         applicationIdentifier: finalApplicationIdentifier,
         subscriberHash,
-        subscriber,
+        contextHash,
+        subscriber: {
+          ...subscriber,
+          subscriberId: subscriber?.subscriberId ?? '',
+          timezone: subscriber?.timezone ?? currentTimezone,
+        },
+        defaultSchedule,
+        context,
       });
 
       if (response?.applicationIdentifier?.startsWith('pk_keyless_')) {

@@ -1,26 +1,29 @@
+import { type Controls } from '@novu/shared';
+import { RJSFSchema } from '@rjsf/utils';
+import isEqual from 'lodash.isequal';
+import { motion } from 'motion/react';
+import { useEffect, useState } from 'react';
+import { useFormContext, useWatch } from 'react-hook-form';
+
+import { RiBookMarkedLine, RiInputField, RiQuestionLine } from 'react-icons/ri';
+import { Link } from 'react-router-dom';
 import { ConfirmationModal } from '@/components/confirmation-modal';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/primitives/accordion';
 import { InlineToast } from '@/components/primitives/inline-toast';
 import { Separator } from '@/components/primitives/separator';
 import { Switch } from '@/components/primitives/switch';
 import { SidebarContent } from '@/components/side-navigation/sidebar';
+import { updateStepInWorkflow } from '@/components/workflow-editor/step-utils';
 import { useSaveForm } from '@/components/workflow-editor/steps/save-form-context';
-import { WorkflowOriginEnum } from '@/utils/enums';
+import { ResourceOriginEnum } from '@/utils/enums';
 import { buildDefaultValuesOfDataSchema } from '@/utils/schema';
 import { cn } from '@/utils/ui';
-import { type Controls } from '@novu/shared';
-import { RJSFSchema } from '@rjsf/utils';
-import { motion } from 'motion/react';
-import { useState } from 'react';
-import { useFormContext } from 'react-hook-form';
-import { RiBookMarkedLine, RiInputField, RiQuestionLine } from 'react-icons/ri';
-import { Link } from 'react-router-dom';
 import { useWorkflow } from '../../workflow-provider';
 import { JsonForm } from './json-form';
 
 type CustomStepControlsProps = {
   dataSchema: Controls['dataSchema'];
-  origin: WorkflowOriginEnum;
+  origin: ResourceOriginEnum;
   className?: string;
 };
 
@@ -29,12 +32,25 @@ const CONTROLS_DOCS_LINK = 'https://docs.novu.co/framework/controls';
 export const CustomStepControls = (props: CustomStepControlsProps) => {
   const { className, dataSchema, origin } = props;
   const [isRestoreDefaultModalOpen, setIsRestoreDefaultModalOpen] = useState(false);
-  const { step } = useWorkflow();
-  const [isOverridden, setIsOverridden] = useState(() => Object.keys(step?.controls.values ?? {}).length > 0);
-  const { reset } = useFormContext();
+  const { step, workflow, update } = useWorkflow();
   const { saveForm } = useSaveForm();
+  const { control, reset } = useFormContext();
+  const watchedValues = useWatch({ control });
 
-  if (origin !== WorkflowOriginEnum.EXTERNAL || Object.keys(dataSchema?.properties ?? {}).length === 0) {
+  const dataSchemaDefaults = buildDefaultValuesOfDataSchema(step?.controls.dataSchema ?? {});
+  const dbValues = step?.controls.values ?? {};
+  const initialIsOverridden = Object.keys(dataSchemaDefaults).some((k) => {
+    const dbVal = dbValues[k];
+    return dbVal !== undefined && !isEqual(dbVal, dataSchemaDefaults[k]);
+  });
+
+  const [isOverridden, setIsOverridden] = useState(initialIsOverridden);
+
+  useEffect(() => {
+    setIsOverridden(initialIsOverridden);
+  }, [initialIsOverridden]);
+
+  if (origin !== ResourceOriginEnum.EXTERNAL || Object.keys(dataSchema?.properties ?? {}).length === 0) {
     return (
       <SidebarContent size="md">
         <Accordion
@@ -93,14 +109,15 @@ export const CustomStepControls = (props: CustomStepControlsProps) => {
   }
 
   return (
-    <SidebarContent size="md" className="p-0">
+    <SidebarContent size="md">
       <ConfirmationModal
         open={isRestoreDefaultModalOpen}
         onOpenChange={setIsRestoreDefaultModalOpen}
         onConfirm={async () => {
-          const defaultValues = buildDefaultValuesOfDataSchema(step?.controls.dataSchema ?? {});
-          reset(defaultValues);
-          saveForm({ forceSubmit: true });
+          if (!workflow || !step) return;
+
+          update(updateStepInWorkflow(workflow, step.stepId, { controlValues: null }));
+          reset(dataSchemaDefaults, { keepErrors: true });
           setIsRestoreDefaultModalOpen(false);
           setIsOverridden(false);
         }}
@@ -124,6 +141,7 @@ export const CustomStepControls = (props: CustomStepControlsProps) => {
             }
 
             setIsOverridden(checked);
+            saveForm({ forceSubmit: true });
           }}
           data-testid="override-defaults-switch"
         />
@@ -148,8 +166,18 @@ export const CustomStepControls = (props: CustomStepControlsProps) => {
           </AccordionTrigger>
 
           <AccordionContent>
-            <div className="bg-background rounded-md border border-dashed p-3">
-              <JsonForm schema={(dataSchema as RJSFSchema) || {}} disabled={!isOverridden} />
+            <div
+              className={cn(
+                'bg-background rounded-md border border-dashed p-3',
+                !isOverridden && 'opacity-60 pointer-events-none'
+              )}
+            >
+              <JsonForm
+                key={String(isOverridden)}
+                schema={(dataSchema as RJSFSchema) || {}}
+                formData={isOverridden ? watchedValues : dataSchemaDefaults}
+                disabled={!isOverridden}
+              />
             </div>
           </AccordionContent>
         </AccordionItem>

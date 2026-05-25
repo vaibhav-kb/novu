@@ -1,5 +1,16 @@
 import { forwardRef, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  buildGroupedBlueprintsKey,
+  computeWorkflowStatus,
+  DeletePreferencesCommand,
+  DeletePreferencesUseCase,
+  InvalidateCacheService,
+  PinoLogger,
+  UpsertPreferences,
+  UpsertUserWorkflowPreferencesCommand,
+  UpsertWorkflowPreferencesCommand,
+} from '@novu/application-generic';
+import {
   ChangeRepository,
   EnvironmentRepository,
   MessageTemplateRepository,
@@ -16,16 +27,6 @@ import {
   IPreferenceChannels,
   PreferencesTypeEnum,
 } from '@novu/shared';
-import {
-  buildGroupedBlueprintsKey,
-  DeletePreferencesCommand,
-  DeletePreferencesUseCase,
-  InvalidateCacheService,
-  PinoLogger,
-  UpsertPreferences,
-  UpsertUserWorkflowPreferencesCommand,
-  UpsertWorkflowPreferencesCommand,
-} from '@novu/application-generic';
 import { ApplyChange, ApplyChangeCommand } from '../apply-change';
 import { PromoteTypeChangeCommand } from '../promote-type-change.command';
 import { INotificationTemplateChangeService } from '../shared';
@@ -84,7 +85,6 @@ export class PromoteNotificationTemplateChange implements INotificationTemplateC
       });
 
       if (step.variants && step.variants.length > 0) {
-        // eslint-disable-next-line no-param-reassign
         step.variants = step.variants
           ?.map(mapNewVariantItem)
           .filter((variant): variant is NotificationStepData => variant !== undefined);
@@ -97,7 +97,6 @@ export class PromoteNotificationTemplateChange implements INotificationTemplateC
       }
 
       if (step?._templateId && oldMessage._id) {
-        // eslint-disable-next-line no-param-reassign
         step._templateId = oldMessage._id;
       }
 
@@ -116,7 +115,6 @@ export class PromoteNotificationTemplateChange implements INotificationTemplateC
       }
 
       if (step?._templateId && oldMessage._id) {
-        // eslint-disable-next-line no-param-reassign
         step._templateId = oldMessage._id;
       }
 
@@ -191,6 +189,7 @@ export class PromoteNotificationTemplateChange implements INotificationTemplateC
         _notificationGroupId: notificationGroup._id,
         isBlueprint: command.organizationId === this.blueprintOrganizationId,
         blueprintId: newItem.blueprintId,
+        status: computeWorkflowStatus(newItem.active, steps),
         ...(newItem.data ? { data: newItem.data } : {}),
       };
 
@@ -232,6 +231,7 @@ export class PromoteNotificationTemplateChange implements INotificationTemplateC
         steps,
         _notificationGroupId: notificationGroup._id,
         isBlueprint: command.organizationId === this.blueprintOrganizationId,
+        status: computeWorkflowStatus(newItem.active, steps),
         ...(newItem.data ? { data: newItem.data } : {}),
       }
     );

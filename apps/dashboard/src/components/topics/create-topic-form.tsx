@@ -1,3 +1,11 @@
+import { standardSchemaResolver } from '@hookform/resolvers/standard-schema';
+import { slugify } from '@novu/shared';
+import { useEffect, useRef, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { Link } from 'react-router-dom';
+import { ExternalToast } from 'sonner';
+import { z } from 'zod';
+import { NovuApiError } from '@/api/api.client';
 import {
   Form,
   FormControl,
@@ -14,11 +22,13 @@ import { showErrorToast, showSuccessToast } from '@/components/primitives/sonner
 import { useCreateTopic } from '@/hooks/use-create-topic';
 import { useTelemetry } from '@/hooks/use-telemetry';
 import { TelemetryEvent } from '@/utils/telemetry';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useEffect, useRef, useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { Link } from 'react-router-dom';
-import { z } from 'zod';
+
+const toastOptions: ExternalToast = {
+  position: 'bottom-right',
+  classNames: {
+    toast: 'mb-4 right-0 pointer-events-none',
+  },
+};
 
 const TopicFormSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -31,19 +41,6 @@ type CreateTopicFormProps = {
   onSubmitStart?: () => void;
 };
 
-// Converts a name to a slug (kebab-case)
-function slugify(text: string): string {
-  return text
-    .toString()
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '-') // Replace spaces with -
-    .replace(/[^\w-]+/g, '') // Remove all non-word chars
-    .replace(/--+/g, '-') // Replace multiple - with single -
-    .replace(/^-+/, '') // Trim - from start of text
-    .replace(/-+$/, ''); // Trim - from end of text
-}
-
 export const CreateTopicForm = (props: CreateTopicFormProps) => {
   const { onSuccess, onError, onSubmitStart } = props;
   const track = useTelemetry();
@@ -52,7 +49,7 @@ export const CreateTopicForm = (props: CreateTopicFormProps) => {
 
   const { createTopic } = useCreateTopic({
     onSuccess: () => {
-      showSuccessToast(`Topic created successfully`);
+      showSuccessToast(`Topic created successfully`, undefined, toastOptions);
       track(TelemetryEvent.TOPICS_PAGE_VISIT); // Using closest available event
 
       if (onSuccess) {
@@ -60,8 +57,17 @@ export const CreateTopicForm = (props: CreateTopicFormProps) => {
       }
     },
     onError: (error) => {
+      // Check if it's a conflict error (topic already exists)
+      if (error instanceof NovuApiError && error.status === 409) {
+        // Set error on the key field specifically
+        form.setError('key', {
+          type: 'manual',
+          message: 'A topic with this key already exists',
+        });
+      }
+
       const errorMessage = error instanceof Error ? error.message : 'Failed to create topic';
-      showErrorToast(errorMessage);
+      showErrorToast(errorMessage, undefined, toastOptions);
 
       if (onError && error instanceof Error) {
         onError(error);
@@ -69,12 +75,12 @@ export const CreateTopicForm = (props: CreateTopicFormProps) => {
     },
   });
 
-  const form = useForm<z.infer<typeof TopicFormSchema>>({
+  const form = useForm({
     defaultValues: {
       name: '',
       key: '',
     },
-    resolver: zodResolver(TopicFormSchema),
+    resolver: standardSchemaResolver(TopicFormSchema),
     shouldFocusError: false,
     mode: 'onSubmit',
     reValidateMode: 'onChange',

@@ -1,9 +1,9 @@
-import { Injectable, Scope, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Injectable, Scope } from '@nestjs/common';
+import { Novu } from '@novu/api';
+import { capitalize, createGuid } from '@novu/application-generic';
 import { MemberRepository, OrganizationRepository, UserRepository } from '@novu/dal';
 import { MemberStatusEnum } from '@novu/shared';
-import { Novu } from '@novu/api';
 import { ResendInviteCommand } from './resend-invite.command';
-import { capitalize, createGuid } from '../../../shared/services/helper/helper.service';
 
 @Injectable({
   scope: Scope.REQUEST,
@@ -49,7 +49,7 @@ export class ResendInvite {
           inviteeName: capitalize(foundInvitee.invite.email.split('@')[0]),
           organizationName: capitalize(organization.name),
           inviterName: capitalize(inviterUser.firstName ?? ''),
-          acceptInviteUrl: `${process.env.FRONT_BASE_URL}/auth/invitation/${token}`,
+          acceptInviteUrl: `${process.env.DASHBOARD_URL || process.env.FRONT_BASE_URL}/auth/invitation/${token}`,
         },
       });
     }

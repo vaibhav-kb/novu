@@ -1,27 +1,26 @@
 import { Body, ClassSerializerInterceptor, Controller, Get, Patch, Put, UseInterceptors } from '@nestjs/common';
-import { PermissionsEnum, UserSessionData } from '@novu/shared';
 import { ApiExcludeController, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { RequirePermissions } from '@novu/application-generic';
+import { ExternalApiAccessible, RequirePermissions } from '@novu/application-generic';
+import { PermissionsEnum, UserSessionData } from '@novu/shared';
+import { RequireAuthentication } from '../auth/framework/auth.decorator';
+import { ApiCommonResponses, ApiResponse } from '../shared/framework/response.decorator';
 import { UserSession } from '../shared/framework/user.decorator';
-import { UpdateBrandingDetailsCommand } from './usecases/update-branding-details/update-branding-details.command';
-import { UpdateBrandingDetails } from './usecases/update-branding-details/update-branding-details.usecase';
-import { GetMyOrganization } from './usecases/get-my-organization/get-my-organization.usecase';
-import { GetMyOrganizationCommand } from './usecases/get-my-organization/get-my-organization.command';
 import { IGetMyOrganizationDto } from './dtos/get-my-organization.dto';
-import { RenameOrganizationCommand } from './usecases/rename-organization/rename-organization-command';
-import { RenameOrganization } from './usecases/rename-organization/rename-organization.usecase';
+import { GetOrganizationSettingsDto } from './dtos/get-organization-settings.dto';
+import { OrganizationBrandingResponseDto, OrganizationResponseDto } from './dtos/organization-response.dto';
 import { RenameOrganizationDto } from './dtos/rename-organization.dto';
 import { UpdateBrandingDetailsDto } from './dtos/update-branding-details.dto';
-import { ApiCommonResponses, ApiResponse } from '../shared/framework/response.decorator';
-import { OrganizationBrandingResponseDto, OrganizationResponseDto } from './dtos/organization-response.dto';
-import { RequireAuthentication } from '../auth/framework/auth.decorator';
-import { GetOrganizationSettings } from './usecases/get-organization-settings/get-organization-settings.usecase';
-import { GetOrganizationSettingsCommand } from './usecases/get-organization-settings/get-organization-settings.command';
-import { UpdateOrganizationSettings } from './usecases/update-organization-settings/update-organization-settings.usecase';
-import { UpdateOrganizationSettingsCommand } from './usecases/update-organization-settings/update-organization-settings.command';
 import { UpdateOrganizationSettingsDto } from './dtos/update-organization-settings.dto';
-import { GetOrganizationSettingsDto } from './dtos/get-organization-settings.dto';
-import { ExternalApiAccessible } from '../auth/framework/external-api.decorator';
+import { GetMyOrganizationCommand } from './usecases/get-my-organization/get-my-organization.command';
+import { GetMyOrganization } from './usecases/get-my-organization/get-my-organization.usecase';
+import { GetOrganizationSettingsCommand } from './usecases/get-organization-settings/get-organization-settings.command';
+import { GetOrganizationSettings } from './usecases/get-organization-settings/get-organization-settings.usecase';
+import { RenameOrganization } from './usecases/rename-organization/rename-organization.usecase';
+import { RenameOrganizationCommand } from './usecases/rename-organization/rename-organization-command';
+import { UpdateBrandingDetailsCommand } from './usecases/update-branding-details/update-branding-details.command';
+import { UpdateBrandingDetails } from './usecases/update-branding-details/update-branding-details.usecase';
+import { UpdateOrganizationSettingsCommand } from './usecases/update-organization-settings/update-organization-settings.command';
+import { UpdateOrganizationSettings } from './usecases/update-organization-settings/update-organization-settings.usecase';
 
 @Controller('/organizations')
 @UseInterceptors(ClassSerializerInterceptor)
@@ -59,10 +58,12 @@ export class EEOrganizationController {
    * @deprecated - used in v1 legacy web
    */
   @Put('/branding')
+  @ExternalApiAccessible()
   @ApiResponse(OrganizationBrandingResponseDto)
   @ApiOperation({
     summary: 'Update organization branding details',
   })
+  @RequirePermissions(PermissionsEnum.ORG_SETTINGS_WRITE)
   async updateBrandingDetails(@UserSession() user: UserSessionData, @Body() body: UpdateBrandingDetailsDto) {
     return await this.updateBrandingDetailsUsecase.execute(
       UpdateBrandingDetailsCommand.create({
@@ -81,10 +82,12 @@ export class EEOrganizationController {
    * @deprecated - used in v1 legacy web
    */
   @Patch('/')
+  @ExternalApiAccessible()
   @ApiResponse(RenameOrganizationDto)
   @ApiOperation({
     summary: 'Rename organization name',
   })
+  @RequirePermissions(PermissionsEnum.ORG_SETTINGS_WRITE)
   async renameOrganization(@UserSession() user: UserSessionData, @Body() body: RenameOrganizationDto) {
     return await this.renameOrganizationUsecase.execute(
       RenameOrganizationCommand.create({
@@ -96,11 +99,11 @@ export class EEOrganizationController {
   }
 
   @Get('/settings')
+  @ExternalApiAccessible()
   @ApiResponse(GetOrganizationSettingsDto)
   @ApiOperation({
     summary: 'Get organization settings',
   })
-  @ExternalApiAccessible()
   @RequirePermissions(PermissionsEnum.ORG_SETTINGS_READ)
   async getSettings(@UserSession() user: UserSessionData) {
     return await this.getOrganizationSettingsUsecase.execute(
@@ -112,6 +115,7 @@ export class EEOrganizationController {
 
   @Patch('/settings')
   @ApiResponse(UpdateOrganizationSettingsDto)
+  @ExternalApiAccessible()
   @ApiOperation({
     summary: 'Update organization settings',
   })
@@ -122,6 +126,8 @@ export class EEOrganizationController {
         userId: user._id,
         organizationId: user.organizationId,
         removeNovuBranding: body.removeNovuBranding,
+        defaultLocale: body.defaultLocale,
+        targetLocales: body.targetLocales,
       })
     );
   }

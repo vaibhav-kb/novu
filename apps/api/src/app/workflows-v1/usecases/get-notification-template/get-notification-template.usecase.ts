@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { GetWorkflowWithPreferencesCommand, GetWorkflowWithPreferencesUseCase } from '@novu/application-generic';
 import { NotificationTemplateEntity } from '@novu/dal';
-import { GetWorkflowByIdsCommand, GetWorkflowWithPreferencesUseCase } from '@novu/application-generic';
 import { GetNotificationTemplateCommand } from './get-notification-template.command';
 
 /**
@@ -14,7 +14,7 @@ export class GetNotificationTemplate {
 
   async execute(command: GetNotificationTemplateCommand): Promise<NotificationTemplateEntity> {
     const workflow = await this.getWorkflowWithPreferencesUseCase.execute(
-      GetWorkflowByIdsCommand.create({
+      GetWorkflowWithPreferencesCommand.create({
         workflowIdOrInternalId: command.workflowIdOrIdentifier,
         environmentId: command.environmentId,
         organizationId: command.organizationId,

@@ -1,5 +1,7 @@
+/** biome-ignore-all lint/correctness/useUniqueElementIds: expected */
+import { useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ActivityError } from '@/components/activity/activity-error';
 import { ActivityFilters } from '@/components/activity/activity-filters';
@@ -10,10 +12,15 @@ import { ActivitySkeleton } from '@/components/activity/activity-skeleton';
 import { ActivityTable } from '@/components/activity/activity-table';
 import { ActivityOverview } from '@/components/activity/components/activity-overview';
 import { defaultActivityFilters } from '@/components/activity/constants';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/primitives/resizable';
+import { ResizablePanel, ResizablePanelGroup } from '@/components/primitives/resizable';
+import { UpdatedAgo } from '@/components/updated-ago';
+import { useEnvironment } from '@/context/environment/hooks';
 import { useActivityUrlState } from '@/hooks/use-activity-url-state';
 import { usePullActivity } from '@/hooks/use-pull-activity';
 import { ActivityFiltersData } from '@/types/activity';
+import { QueryKeys } from '@/utils/query-keys';
+import { cn } from '../../utils/ui';
+import { EmptyTopicsIllustration } from '../topics/empty-topics-illustration';
 
 type ActivityFeedContentProps = {
   initialFilters?: Partial<ActivityFiltersData>;
@@ -32,6 +39,18 @@ export function ActivityFeedContent({
 }: ActivityFeedContentProps) {
   const { activityItemId, filters, filterValues, handleActivitySelect, handleFiltersChange } = useActivityUrlState();
   const { activity, isPending, error } = usePullActivity(activityItemId);
+  const [showDetailPanel, setShowDetailPanel] = useState(false);
+  const onListStateChange = useCallback((hasActivities: boolean) => setShowDetailPanel(hasActivities), []);
+
+  const queryClient = useQueryClient();
+  const { currentEnvironment } = useEnvironment();
+
+  // Track last updated time for the activities list
+  const [lastUpdated, setLastUpdated] = useState(new Date());
+
+  useEffect(() => {
+    setLastUpdated(new Date());
+  }, [filters]);
 
   // Merge initial filters with current filters
   const mergedFilterValues = useMemo(
@@ -92,7 +111,8 @@ export function ActivityFeedContent({
       mergedFilterValues.channels.length > 0 ||
       mergedFilterValues.workflows.length > (baseFilters.workflows?.length || 0) ||
       mergedFilterValues.transactionId !== (baseFilters.transactionId || '') ||
-      mergedFilterValues.subscriberId !== (baseFilters.subscriberId || '')
+      mergedFilterValues.subscriberId !== (baseFilters.subscriberId || '') ||
+      mergedFilterValues.severity.length > 0
     );
   }, [mergedFilterValues, initialFilters]);
 
@@ -110,18 +130,32 @@ export function ActivityFeedContent({
     [mergedFilterValues, handleFiltersChange, handleActivitySelect]
   );
 
+  const handleRefresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: [QueryKeys.fetchActivities, currentEnvironment?._id] });
+    setLastUpdated(new Date());
+  };
+
   return (
-    <div className={className}>
-      <ActivityFilters
-        filters={mergedFilterValues}
-        onFiltersChange={handleFiltersChange}
-        onReset={handleClearFilters}
-        showReset={hasChanges}
-        hide={hideFilters}
-      />
+    <div className={cn('p-2.5', className)}>
+      <div className="flex items-center justify-between pb-2.5 gap-2">
+        <ActivityFilters
+          filters={mergedFilterValues}
+          onFiltersChange={handleFiltersChange}
+          onReset={handleClearFilters}
+          showReset={hasChanges}
+          hide={hideFilters}
+          className="pb-0"
+        />
+        <UpdatedAgo lastUpdated={lastUpdated} onRefresh={handleRefresh} />
+      </div>
       <div className={`relative flex ${contentHeight}`}>
-        <ResizablePanelGroup direction="horizontal">
-          <ResizablePanel defaultSize={70} minSize={50}>
+        <ResizablePanelGroup orientation="horizontal" className="gap-2" autoSaveId="activity-feed-panel-group">
+          <ResizablePanel
+            defaultSize="50%"
+            minSize="35%"
+            className="h-full transition-[flex-basis] duration-300 ease-out"
+            id="activity-table-panel"
+          >
             <ActivityTable
               selectedActivityId={activityItemId}
               onActivitySelect={handleActivitySelect}
@@ -129,23 +163,27 @@ export function ActivityFeedContent({
               hasActiveFilters={hasActiveFilters}
               onClearFilters={handleClearFilters}
               onTriggerWorkflow={onTriggerWorkflow}
+              onListStateChange={onListStateChange}
             />
           </ResizablePanel>
 
-          <AnimatePresence mode="wait">
-            {activityItemId && (
-              <>
-                <ResizableHandle />
-                <ResizablePanel defaultSize={35} minSize={35} maxSize={50}>
-                  <motion.div
-                    key={activityItemId}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{
-                      duration: 0.2,
-                    }}
-                    className="bg-background h-full overflow-auto"
-                  >
+          {showDetailPanel && (
+            <ResizablePanel
+              defaultSize="50%"
+              minSize="35%"
+              maxSize="50%"
+              className="overflow-hidden"
+              id="activity-detail-panel"
+            >
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={activityItemId}
+                  initial={{ opacity: 0, x: 8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
+                  className="border-stroke-soft h-full overflow-auto rounded-lg border bg-white"
+                >
+                  {activityItemId ? (
                     <ActivityPanel>
                       {isPending ? (
                         <ActivitySkeleton />
@@ -153,21 +191,26 @@ export function ActivityFeedContent({
                         <ActivityError />
                       ) : (
                         <>
-                          <ActivityHeader title={activity.template?.name} />
+                          <ActivityHeader activity={activity} onTransactionIdChange={handleTransactionIdChange} />
                           <ActivityOverview activity={activity} />
-                          <ActivityLogs
-                            activity={activity}
-                            onActivitySelect={handleActivitySelect}
-                            onTransactionIdChange={handleTransactionIdChange}
-                          />
+                          <ActivityLogs activity={activity} onActivitySelect={handleActivitySelect} />
                         </>
                       )}
                     </ActivityPanel>
-                  </motion.div>
-                </ResizablePanel>
-              </>
-            )}
-          </AnimatePresence>
+                  ) : (
+                    <div className="flex h-full w-full flex-col items-center justify-center gap-6 text-center">
+                      <EmptyTopicsIllustration />
+                      <p className="text-text-soft text-paragraph-sm max-w-[60ch]">
+                        Nothing to show,
+                        <br />
+                        Select a log on the left to view detailed info here
+                      </p>
+                    </div>
+                  )}
+                </motion.div>
+              </AnimatePresence>
+            </ResizablePanel>
+          )}
         </ResizablePanelGroup>
       </div>
     </div>

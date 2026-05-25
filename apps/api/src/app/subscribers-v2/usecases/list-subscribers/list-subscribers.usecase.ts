@@ -1,9 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InstrumentUsecase } from '@novu/application-generic';
 import { SubscriberRepository } from '@novu/dal';
-import { ListSubscribersCommand } from './list-subscribers.command';
-import { ListSubscribersResponseDto } from '../../dtos/list-subscribers-response.dto';
 import { DirectionEnum } from '../../../shared/dtos/base-responses';
+import { ListSubscribersResponseDto } from '../../dtos/list-subscribers-response.dto';
+import { ListSubscribersCommand } from './list-subscribers.command';
 import { mapSubscriberEntityToDto } from './map-subscriber-entity-to.dto';
 
 @Injectable()
@@ -12,6 +12,10 @@ export class ListSubscribersUseCase {
 
   @InstrumentUsecase()
   async execute(command: ListSubscribersCommand): Promise<ListSubscribersResponseDto> {
+    if (command.before && command.after) {
+      throw new BadRequestException('Cannot specify both "before" and "after" cursors at the same time.');
+    }
+
     const pagination = await this.subscriberRepository.listSubscribers({
       after: command.after,
       before: command.before,
@@ -31,6 +35,8 @@ export class ListSubscribersUseCase {
       data: pagination.subscribers.map((subscriber) => mapSubscriberEntityToDto(subscriber)),
       next: pagination.next,
       previous: pagination.previous,
+      totalCount: pagination.totalCount,
+      totalCountCapped: pagination.totalCountCapped,
     };
   }
 }

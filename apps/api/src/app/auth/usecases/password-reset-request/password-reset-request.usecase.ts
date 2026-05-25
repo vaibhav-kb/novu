@@ -1,10 +1,9 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
-import { differenceInHours, differenceInSeconds, parseISO } from 'date-fns';
-import { IUserResetTokenCount, UserEntity, UserRepository } from '@novu/dal';
 import { buildUserKey, InvalidateCacheService } from '@novu/application-generic';
-
+import { IUserResetTokenCount, UserEntity, UserRepository } from '@novu/dal';
 import { normalizeEmail, PasswordResetFlowEnum } from '@novu/shared';
+import { differenceInHours, differenceInSeconds, parseISO } from 'date-fns';
+import { v4 as uuidv4 } from 'uuid';
 import { PasswordResetRequestCommand } from './password-reset-request.command';
 
 @Injectable()
@@ -50,7 +49,7 @@ export class PasswordResetRequest {
   private static getResetRedirectLink(token: string, user: UserEntity, src?: PasswordResetFlowEnum): string {
     // ensure that only users without passwords are allowed to reset
     if (src === PasswordResetFlowEnum.USER_PROFILE && !user.password) {
-      return `${process.env.FRONT_BASE_URL}/settings/profile?token=${token}&view=password`;
+      return `${process.env.DASHBOARD_URL || process.env.FRONT_BASE_URL}/settings/profile?token=${token}&view=password`;
     }
 
     /**
@@ -59,7 +58,7 @@ export class PasswordResetRequest {
      * 2. When src is explicitly FORGOT_PASSWORD
      * 3. User already has a password
      */
-    return `${process.env.FRONT_BASE_URL}/auth/reset/${token}`;
+    return `${process.env.DASHBOARD_URL || process.env.FRONT_BASE_URL}/auth/reset/${token}`;
   }
 
   private isRequestBlocked(user: UserEntity) {
